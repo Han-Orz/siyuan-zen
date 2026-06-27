@@ -9,7 +9,9 @@
     "clean": "rimraf dist *.zip"
   },
   "devDependencies": {
+    "@types/archiver": "^6.0.0",
     "@types/node": "^20.0.0",
+    "archiver": "^7.0.0",
     "esbuild": "^0.21.0",
     "esbuild-sass-plugin": "^3.3.1",
     "rimraf": "^5.0.0",

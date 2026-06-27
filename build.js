@@ -47,8 +47,37 @@ if (watch) {
   esbuild.build(buildOptions).then(() => {
     copyAssets();
     console.log('Build complete: dist/');
+    if (process.argv.includes('--zip')) {
+      packageZip();
+    }
   }).catch(err => {
     console.error(err);
     process.exit(1);
   });
+}
+
+function packageZip() {
+  const archiver = require('archiver');
+  const output = fs.createWriteStream('zentype.zip');
+  const archive = archiver('zip', { zlib: { level: 9 } });
+
+  output.on('close', () => {
+    console.log(`Created zentype.zip (${archive.pointer()} bytes)`);
+  });
+
+  archive.on('warning', (err) => {
+    if (err.code === 'ENOENT') {
+      console.warn('Archive warning:', err);
+    } else {
+      throw err;
+    }
+  });
+
+  archive.on('error', (err) => {
+    throw err;
+  });
+
+  archive.pipe(output);
+  archive.directory('dist/', false);
+  archive.finalize();
 }
