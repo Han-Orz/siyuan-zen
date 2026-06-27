@@ -1,4 +1,4 @@
-# zenType v2 实施计划
+﻿# zenType v2 实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -298,7 +298,7 @@ git commit -m "chore: rebuild project skeleton with esbuild + TypeScript"
 - `isInEmbedBlock(): boolean` — 文本光标在嵌入块（iframe/video）里
 - `isReadMode(): boolean` — 思源编辑器处于只读状态
 - `isInPopup(): boolean` — 悬浮窗（`block__popover`）处于打开状态
-- `hasMultiLineSelection(): boolean` — 选中了多行文本
+- `hasSelection(): boolean` — 选中了多行文本
 - `styleManager.addStyle(id, css): void` — 注入 `<style>` 标签
 - `styleManager.removeStyle(id): void` — 移除指定样式
 - `styleManager.removeAll(): void` — 卸载时清理
@@ -397,7 +397,7 @@ import { getCursorElement } from "./getCursorRect";
  */
 
 /** 选中了多行文本（拖蓝） */
-export function hasMultiLineSelection(): boolean {
+export function hasSelection(): boolean {
   const sel = window.getSelection();
   return (sel?.toString().length ?? 0) > 0;
 }
@@ -442,7 +442,7 @@ export function shouldPauseCursor(): boolean {
  * 包含：选中多行、悬浮窗编辑。
  */
 export function shouldPauseFocusAndTypewriter(): boolean {
-  if (hasMultiLineSelection()) return true;
+  if (hasSelection()) return true;
   if (isInPopup()) return true;
   return false;
 }
