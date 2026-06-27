@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["src/index.ts"],
+  "sourcesContent": ["// zenType v2 \u5165\u53E3\nconsole.log(\"zenType v2 loading...\");\n"],
+  "mappings": ";;;AACA,QAAQ,IAAI,uBAAuB;",
+  "names": []
+}

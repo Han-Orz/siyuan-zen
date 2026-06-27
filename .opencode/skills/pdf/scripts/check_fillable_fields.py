@@ -1,0 +1,1 @@
+{"value":"import sys\nfrom pypdf import PdfReader\n\n\n\n\nreader = PdfReader(sys.argv[1])\nif (reader.get_fields()):\n    print(\"This PDF has fillable form fields\")\nelse:\n    print(\"This PDF does not have fillable form fields; you will need to visually determine where to enter data\")\n"}

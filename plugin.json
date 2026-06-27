@@ -1,0 +1,23 @@
+{
+  "name": "zenType",
+  "author": "zenType Developer",
+  "url": "https://github.com/your-username/zenType",
+  "version": "2.0.0",
+  "minAppVersion": "3.0.12",
+  "backends": ["all"],
+  "frontends": ["all"],
+  "displayName": {
+    "default": "zenType",
+    "zh_CN": "禅打"
+  },
+  "description": {
+    "default": "Smooth cursor + typewriter mode + ripple focus for distraction-free writing",
+    "zh_CN": "顺滑光标 + 打字机模式 + 涟漪聚焦，让写作更专注"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README_zh_CN.md"
+  },
+  "funding": {},
+  "disabledInPublish": false
+}
