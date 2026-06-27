@@ -1,37 +1,52 @@
-# 焦点写作｜ZenType - 思源笔记插件
+# zenType v2
 
-焦点写作是一个为思源笔记提供聚焦、打字机模式和顺滑光标等功能的插件。通过让周围块逐渐模糊、将输入块移至屏幕中心以及自定义光标样式，焦点写作帮助用户更专注于当前编辑的内容。
+Smooth cursor + typewriter mode + ripple focus for distraction-free writing in SiYuan Note.
 
+## Features
 
-> [!WARNING]
-> 插件有相当多不完善的地方，也没有经过测试，请谨慎考虑是否使用。
+- **Smooth Cursor** — Custom blue cursor replaces the system caret with smooth transition animation
+- **Typewriter Mode** — Your caret stays at 38% screen height (golden ratio), with a subtle highlight bar tracking it
+- **Ripple Focus** — The current block stays bright while surrounding blocks gradually fade
 
-# 功能概述
-### 聚焦当前块
-通过让周围块逐渐模糊（透明化），在当前行添加高亮条等方式，突出显示当前编辑的块，增强视觉焦点。
+## Installation
 
-### 打字机模式
-在输入时，当前块会自动滚动到屏幕中心，确保用户始终在屏幕中央进行编辑。
+1. Download the latest release zip from the Releases page
+2. In SiYuan Note, open Settings → Plugins → Load plugin from disk
+3. Select the downloaded zip
 
-### 顺滑光标
-隐藏默认光标，替换为自定义块，提供更顺滑的光标体验。光标样式类似于 IA Writer 的光标模式。
+## Usage
 
-# 安装
+All three features are enabled by default. To toggle:
 
-- 下载Release文件并解压至插件文件夹。
-- 插件市场搜索zenType并启用。
+- **Top bar icon** (pencil): Toggle all three features on/off
+- **Command palette** (Ctrl+Shift+P): Search "zenType" to see individual toggles
 
-# 计划表
-- [x] 功能初步完成
-  - [x] 聚焦功能
-  - [x] 打字机功能
-  - [x] 顺滑光标
-- [x] 发布插件
-- [ ] 优化及修复
-  - [x] 用 ~~requestAnimationFrame~~ 不停调用更新光标位置的方法优化光标
-  - [x] 先把高亮条插入在`<body>`标签下解决不同页面高亮背景条丢失的问题
-  - [x] 卸载插件的时候把样式文件也卸掉
-  - [ ] 全屏模式下高亮背景条的层级显示问题
-  - [ ] 改善退格及回车产生空行情况下的聚焦模式
+## Edge Cases
 
-如果您有任何建议或发现问题，欢迎在 GitHub 上提交 issue 或 在链滴上联系我。
+### Mouse-Centered Ripple (new in v2)
+
+When you're in read-only mode, or when you've stopped typing for 2+ seconds, the ripple focus automatically follows your mouse cursor. As soon as you start typing again, it returns to tracking your text caret.
+
+### Embedded Blocks
+
+Videos, iframes, and PDF embeds are treated as 1 ripple unit (they fade normally). Typewriter mode skips them (no scroll when cursor is in an embed).
+
+### Nested Blocks (Simplified in v1)
+
+If your cursor is in a child of a nested block (e.g., a list item inside a list), only the immediate parent layer fades. Outer containers stay at 100% opacity. This is a simplification — recursive fading is planned for v2 if users request it.
+
+### Selection (Multi-line)
+
+When you drag-select text, ripple focus and typewriter mode gracefully fade out (0.3s animation). The smooth cursor stays active.
+
+### Suspended Edits & Popups
+
+Read-only mode and block popups automatically suspend typewriter mode. Ripple focus switches to mouse-centered mode in read-only.
+
+## Roadmap
+
+See [docs/superpowers/specs/2026-06-27-zentype-redesign-design.md](docs/superpowers/specs/2026-06-27-zentype-redesign-design.md) for the full design.
+
+## License
+
+MIT
