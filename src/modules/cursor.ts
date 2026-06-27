@@ -1,5 +1,6 @@
 import { getCursorRect } from "../utils/getCursorRect";
 import { addStyle, removeStyle } from "../utils/styleManager";
+import cursorCss from "../styles/index.scss";
 
 // 思源笔记全局对象类型（src/types/index.d.ts 中的全局 Window 增强
 // 因同目录存在 index.ts，未被作为 ambient 加载；此处局部声明以满足 strict 模式）
@@ -21,6 +22,8 @@ let cursorEl: HTMLDivElement | null = null;
 let blinkTimer: number | null = null;
 let pendingFrame: number | null = null;
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
+let blinkListeners: Array<[string, EventListener]> = [];
+let wsHandler: ((e: MessageEvent) => void) | null = null;
 
 function createCursorElement(): HTMLDivElement {
   let el = document.getElementById(CURSOR_ID) as HTMLDivElement | null;
@@ -71,6 +74,7 @@ function stopBlink(): void {
 export function initCursor(): void {
   // 创建 DOM
   cursorEl = createCursorElement();
+  addStyle(STYLE_ID, cursorCss);
 
   // 绑定事件
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
@@ -84,26 +88,32 @@ export function initCursor(): void {
     ["resize", updateCursor],
   ];
 
-  handlers.forEach(([event, handler]) => {
-    document.addEventListener(event, handler as EventListener);
+  handlers.forEach(([event, handler, options]) => {
+    document.addEventListener(event, handler as EventListener, options);
   });
   eventListeners = handlers;
 
-  // 闪烁控制
-  document.addEventListener("selectionchange", stopBlink);
-  document.addEventListener("keydown", stopBlink);
-  document.addEventListener("mousedown", stopBlink);
+  // 闪烁控制（存入数组以便 destroy 时清理）
+  blinkListeners = [
+    ["selectionchange", stopBlink],
+    ["keydown", stopBlink],
+    ["mousedown", stopBlink],
+  ];
+  blinkListeners.forEach(([event, handler]) => {
+    document.addEventListener(event, handler);
+  });
 
-  // WS 监听 transactions
+  // WS 监听 transactions（保存 handler 以便 destroy 时清理）
   if (window.siyuan?.ws?.ws) {
-    window.siyuan.ws.ws.addEventListener("message", (e: MessageEvent) => {
+    wsHandler = (e: MessageEvent) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.cmd === "transactions") {
           updateCursor();
         }
       } catch {}
-    });
+    };
+    window.siyuan.ws.ws.addEventListener("message", wsHandler);
   }
 
   startBlink();
@@ -111,10 +121,23 @@ export function initCursor(): void {
 }
 
 export function destroyCursor(): void {
+  // 清理主事件
   eventListeners.forEach(([event, handler]) => {
     document.removeEventListener(event, handler);
   });
   eventListeners = [];
+
+  // 清理闪烁控制事件
+  blinkListeners.forEach(([event, handler]) => {
+    document.removeEventListener(event, handler);
+  });
+  blinkListeners = [];
+
+  // 清理 WS 监听
+  if (wsHandler && window.siyuan?.ws?.ws) {
+    window.siyuan.ws.ws.removeEventListener("message", wsHandler);
+    wsHandler = null;
+  }
 
   stopBlink();
 

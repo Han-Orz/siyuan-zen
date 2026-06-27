@@ -604,6 +604,19 @@ git commit -m "feat: add shared types and utility modules"
 ```typescript
 import { getCursorRect } from "../utils/getCursorRect";
 import { addStyle, removeStyle } from "../utils/styleManager";
+import cursorCss from "../styles/index.scss";
+
+// 思源笔记全局对象类型（src/types/index.d.ts 中的全局 Window 增强
+// 因同目录存在 index.ts，未被作为 ambient 加载；此处局部声明以满足 strict 模式）
+declare global {
+  interface Window {
+    siyuan?: {
+      ws?: {
+        ws?: WebSocket;
+      };
+    };
+  }
+}
 
 const STYLE_ID = "cursor";
 const CURSOR_ID = "zentype-cursor";
@@ -612,7 +625,9 @@ const BLINK_DELAY = 500;
 let cursorEl: HTMLDivElement | null = null;
 let blinkTimer: number | null = null;
 let pendingFrame: number | null = null;
-let eventListeners: Array<[string, EventListener]> = [];
+let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
+let blinkListeners: Array<[string, EventListener]> = [];
+let wsHandler: ((e: MessageEvent) => void) | null = null;
 
 function createCursorElement(): HTMLDivElement {
   let el = document.getElementById(CURSOR_ID) as HTMLDivElement | null;
@@ -661,11 +676,12 @@ function stopBlink(): void {
 }
 
 export function initCursor(): void {
-  // 创建 DOM
+  // 创建 DOM + 注入 CSS
   cursorEl = createCursorElement();
+  addStyle(STYLE_ID, cursorCss);
 
-  // 绑定事件
-  const handlers: Array<[string, EventListener]> = [
+  // 主事件：必须保留 options（含 passive）
+  const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", updateCursor],
     ["keyup", updateCursor],
     ["keydown", updateCursor],
@@ -676,26 +692,32 @@ export function initCursor(): void {
     ["resize", updateCursor],
   ];
 
-  handlers.forEach(([event, handler]) => {
-    document.addEventListener(event, handler as EventListener);
+  handlers.forEach(([event, handler, options]) => {
+    document.addEventListener(event, handler as EventListener, options);
   });
   eventListeners = handlers;
 
-  // 闪烁控制
-  document.addEventListener("selectionchange", stopBlink);
-  document.addEventListener("keydown", stopBlink);
-  document.addEventListener("mousedown", stopBlink);
+  // 闪烁控制（存入数组以便 destroy 时清理）
+  blinkListeners = [
+    ["selectionchange", stopBlink],
+    ["keydown", stopBlink],
+    ["mousedown", stopBlink],
+  ];
+  blinkListeners.forEach(([event, handler]) => {
+    document.addEventListener(event, handler);
+  });
 
-  // WS 监听 transactions
+  // WS 监听 transactions（保存 handler 以便 destroy 时清理）
   if (window.siyuan?.ws?.ws) {
-    window.siyuan.ws.ws.addEventListener("message", (e) => {
+    wsHandler = (e: MessageEvent) => {
       try {
-        const msg = JSON.parse((e as MessageEvent).data);
+        const msg = JSON.parse(e.data);
         if (msg.cmd === "transactions") {
           updateCursor();
         }
       } catch {}
-    });
+    };
+    window.siyuan.ws.ws.addEventListener("message", wsHandler);
   }
 
   startBlink();
@@ -703,10 +725,23 @@ export function initCursor(): void {
 }
 
 export function destroyCursor(): void {
+  // 主事件
   eventListeners.forEach(([event, handler]) => {
     document.removeEventListener(event, handler);
   });
   eventListeners = [];
+
+  // 闪烁控制事件
+  blinkListeners.forEach(([event, handler]) => {
+    document.removeEventListener(event, handler);
+  });
+  blinkListeners = [];
+
+  // WS 监听
+  if (wsHandler && window.siyuan?.ws?.ws) {
+    window.siyuan.ws.ws.removeEventListener("message", wsHandler);
+    wsHandler = null;
+  }
 
   stopBlink();
 
@@ -727,6 +762,25 @@ export function isCursorEnabled(): boolean {
   return cursorEl !== null;
 }
 ```
+
+同时创建 `src/types/scss.d.ts`（让 TypeScript 接受 SCSS 导入）：
+```typescript
+/**
+ * Ambient module declaration for SCSS files.
+ * esbuild sass-plugin compiles .scss to a CSS string, which is injected
+ * into the document via addStyle() at runtime.
+ */
+declare module "*.scss" {
+  const css: string;
+  export default css;
+}
+```
+
+> **审查经验（适用于 Task 4 / Task 5）**：
+> 1. **必须注入 CSS** — `addStyle(STYLE_ID, css)` 不能漏，否则 DOM 创建了也没样式。
+> 2. **所有 addEventListener 必须配对 removeEventListener** — 包括：主事件、辅助控制事件（如 blink 控制）、外部对象监听（如 WebSocket）。每个 init 都应把监听存入数组，destroy 遍历清理。
+> 3. **保留 listener options** — `{ passive: true }` 等需要保留。`forEach(([event, handler]) => ...` 会丢失第三元素，要写成 `forEach(([event, handler, options]) => ...`。
+> 4. **WS 监听需要保存 handler 引用** — 不能用 inline 匿名函数，否则 `removeEventListener` 无法匹配。
 
 - [ ] **Step 3: 验证 TypeScript 编译**
 
@@ -793,7 +847,7 @@ const THRESHOLD = 40;       // 触发阈值（px）
 const DURATION = 400;       // 滚动时长（ms）
 
 let highlightEl: HTMLDivElement | null = null;
-let eventListeners: Array<[string, EventListener]> = [];
+let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
 
 function easeInOutCubic(t: number): number {
@@ -874,7 +928,8 @@ function checkAndScroll(): void {
 export function initTypewriter(): void {
   highlightEl = createHighlightElement();
 
-  const handlers: Array<[string, EventListener]> = [
+  // 事件数组使用三元组以便保留 options
+  const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", checkAndScroll],
     ["keyup", checkAndScroll],
     ["keydown", checkAndScroll],
@@ -883,8 +938,9 @@ export function initTypewriter(): void {
     ["resize", checkAndScroll],
   ];
 
-  handlers.forEach(([event, handler]) => {
-    document.addEventListener(event, handler as EventListener);
+  // 解构必须包含第三个元素
+  handlers.forEach(([event, handler, options]) => {
+    document.addEventListener(event, handler as EventListener, options);
   });
   eventListeners = handlers;
 }
@@ -906,6 +962,11 @@ export function destroyTypewriter(): void {
   }
 }
 ```
+
+> **审查经验（继承自 Task 3）**：
+> 1. 使用 `Array<[string, EventListener, AddEventListenerOptions?]>` 三元组数组，以便保留 `passive` 等选项。
+> 2. `forEach(([event, handler, options]) => ...` 解构必须包含第三个元素，否则 `{ passive: true }` 会被丢弃。
+> 3. 高亮条样式位于 `src/styles/index.scss` 的 `#zentype-highlight-line` 选择器。**注意**：如果用户只启用 typewriter 而禁用 cursor，那些样式就不会被注入。当前接受此限制（v1 三模块默认全开）。如未来需独立启用，需要 typewriter 也调用 `addStyle("typewriter", ...)` 注入同一份 SCSS（或拆分为单独的 typewriter SCSS 文件）。
 
 - [ ] **Step 2: 验证 TypeScript 编译**
 
@@ -969,7 +1030,7 @@ let lastTextCursorChange = 0;
 let lastMouseBlock: Element | null = null;
 let lastTextBlock: Element | null = null;
 let pendingFrame: number | null = null;
-let eventListeners: Array<[string, EventListener]> = [];
+let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let lastMouseMove = 0;
 
 function getCurrentBlock(): Element | null {
@@ -1090,15 +1151,17 @@ export function initRipple(): void {
   mode = "text";
   lastTextCursorChange = Date.now();
 
-  const handlers: Array<[string, EventListener]> = [
+  // 事件数组使用三元组以便保留 options（mousemove 用 passive 提高滚动性能）
+  const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", onSelectionChange],
-    ["mousemove", onMouseMove as EventListener],
+    ["mousemove", onMouseMove as EventListener, { passive: true }],
     ["click", onSelectionChange],
     ["keyup", onSelectionChange],
   ];
 
-  handlers.forEach(([event, handler]) => {
-    document.addEventListener(event, handler);
+  // 解构必须包含第三个元素
+  handlers.forEach(([event, handler, options]) => {
+    document.addEventListener(event, handler, options);
   });
   eventListeners = handlers;
 
@@ -1119,6 +1182,12 @@ export function destroyRipple(): void {
   clearAllOpacity();
 }
 ```
+
+> **审查经验（继承自 Task 3）**：
+> 1. 使用 `Array<[string, EventListener, AddEventListenerOptions?]>` 三元组数组，以便保留 `passive` 等选项。
+> 2. `forEach(([event, handler, options]) => ...` 解构必须包含第三个元素，否则 `{ passive: true }` 会被丢弃。
+> 3. `mousemove` 监听必须用 `{ passive: true }` —— 它会被高频触发，主线程阻塞会卡顿编辑器。
+> 4. ripple 不需要导入 SCSS（它直接通过 JS 设置 `style.opacity`），所以本模块无 CSS 注入问题。
 
 - [ ] **Step 2: 验证 TypeScript 编译**
 
