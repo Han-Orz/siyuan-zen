@@ -16,3 +16,6 @@ index.css.map
 
 # SDD process artifacts (session-local)
 .superpowers/
+
+# Release zip (build artifact)
+zentype.zip
