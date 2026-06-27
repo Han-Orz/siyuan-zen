@@ -20,6 +20,7 @@ export function getCursorRect(): DOMRect | null {
   try {
     const marker = document.createTextNode("\u200B");
     range.insertNode(marker);
+    // Text 节点本身没有 getBoundingClientRect，但作为 Element 子类运行时存在。
     const rect = (marker as unknown as Element).getBoundingClientRect();
     marker.remove();
     return rect;

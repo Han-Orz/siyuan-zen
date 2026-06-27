@@ -5,14 +5,15 @@ import { getCursorElement } from "./getCursorRect";
  * 每个函数独立无副作用，便于在模块中按需调用。
  */
 
-/** 选中了多行文本（拖蓝） */
-export function hasMultiLineSelection(): boolean {
+/** 选中了任意文本（拖蓝） */
+export function hasSelection(): boolean {
   const sel = window.getSelection();
   return (sel?.toString().length ?? 0) > 0;
 }
 
 /** 思源编辑器处于只读状态 */
 export function isReadMode(): boolean {
+  // 思源 `.protyle-content` 始终是 HTMLElement；querySelector 可能返回 null。
   const editor = document.querySelector(".protyle-content") as HTMLElement | null;
   return !editor || !editor.isContentEditable;
 }
@@ -27,7 +28,7 @@ export function isInEmbedBlock(): boolean {
   const cursor = getCursorElement();
   if (!cursor) return false;
   return !!cursor.closest(
-    "iframe, video, [data-type='NodeIFrame'], [data-type='NodeVideo']"
+    "iframe, video, [data-type='NodeIFrame'], [data-type='NodeVideo'], [data-type='NodePDF']"
   );
 }
 
@@ -51,7 +52,7 @@ export function shouldPauseCursor(): boolean {
  * 包含：选中多行、悬浮窗编辑。
  */
 export function shouldPauseFocusAndTypewriter(): boolean {
-  if (hasMultiLineSelection()) return true;
+  if (hasSelection()) return true;
   if (isInPopup()) return true;
   return false;
 }
