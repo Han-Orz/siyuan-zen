@@ -32,21 +32,6 @@ export function isInEmbedBlock(): boolean {
   );
 }
 
-/** 文本光标在思源主编辑器内（不在悬浮窗/对话框里） */
-export function isInMainEditor(): boolean {
-  const cursor = getCursorElement();
-  if (!cursor) return false;
-  return !!cursor.closest(".protyle:not(.fn__none) .protyle-content");
-}
-
-/**
- * 顺滑光标不暂停。它总是返回 false。
- * 保留此函数以保持 API 一致性。
- */
-export function shouldPauseCursor(): boolean {
-  return false;
-}
-
 /**
  * 聚焦 + 打字机需要暂停的场景。
  * 包含：选中多行、悬浮窗编辑。

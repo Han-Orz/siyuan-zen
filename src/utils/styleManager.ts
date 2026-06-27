@@ -25,8 +25,3 @@ export function removeStyle(id: string): void {
     styleMap.delete(id);
   }
 }
-
-export function removeAllStyles(): void {
-  styleMap.forEach((style) => style.remove());
-  styleMap.clear();
-}

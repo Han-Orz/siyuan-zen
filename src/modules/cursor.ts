@@ -153,7 +153,3 @@ export function destroyCursor(): void {
 
   removeStyle(STYLE_ID);
 }
-
-export function isCursorEnabled(): boolean {
-  return cursorEl !== null;
-}
