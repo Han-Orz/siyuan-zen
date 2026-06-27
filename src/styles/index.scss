@@ -46,7 +46,7 @@
 #zentype-highlight-line {
   position: fixed;
   pointer-events: none;
-  z-index: 1;
+  z-index: 1000; // fallback；typewriter.ts 会按编辑器容器 z-index 动态覆盖
   width: 100%;
   height: 0;
   background: var(--zt-highlight-bg, rgba(242, 236, 222, 0.6));

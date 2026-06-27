@@ -30,8 +30,19 @@ function createHighlightElement(): HTMLDivElement {
   return el;
 }
 
+function getEditorZIndex(): number {
+  const container = getEditorContainer();
+  if (!container) return 0;
+  const computed = window.getComputedStyle(container).zIndex;
+  const parsed = Number.parseInt(computed, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function updateHighlight(rect: DOMRect): void {
   if (!highlightEl) return;
+  // 思源全屏模式会给容器一个高 z-index；高亮条需要始终高于当前可滚动编辑器容器
+  const editorZ = getEditorZIndex();
+  highlightEl.style.zIndex = String(Math.max(editorZ + 1, 1000));
   highlightEl.style.transform = `translate3d(0, ${rect.top - 4}px, 0)`;
   highlightEl.style.height = `${rect.height + 8}px`;
   highlightEl.style.left = `${rect.left}px`;
