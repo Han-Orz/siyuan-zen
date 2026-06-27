@@ -821,6 +821,47 @@ git commit -m "feat(cursor): implement smooth cursor module with blink animation
 
 ---
 
+## Task 3 Lessons Learned（Task 4 & 5 必须遵循）
+
+**任何模块的 `init/destroy` 都必须遵循以下 4 个模式**（基于 Task 3 review 经验）：
+
+1. **注入 CSS** — 不要依赖全局 CSS 加载。init 时调用 `addStyle(STYLE_ID, importedCssString)`，destroy 时 `removeStyle(STYLE_ID)`。
+   ```typescript
+   import typewriterCss from "../styles/typewriter.css"; // 或 .scss
+   // init:
+   addStyle(STYLE_ID, typewriterCss);
+   // destroy:
+   removeStyle(STYLE_ID);
+   ```
+
+2. **追踪所有事件监听器** — 包括辅助事件（闪烁控制、防抖等）。每个 `document.addEventListener` 都必须在 destroy 中有对应的 `removeEventListener`。
+   ```typescript
+   let blinkListeners: Array<[string, EventListener]> = [];
+   // init:
+   blinkListeners = [["keydown", stopBlink], ...];
+   blinkListeners.forEach(([e, h]) => document.addEventListener(e, h));
+   // destroy:
+   blinkListeners.forEach(([e, h]) => document.removeEventListener(e, h));
+   blinkListeners = [];
+   ```
+
+3. **保存 WebSocket handler 引用** — 否则 destroy 时无法 removeEventListener。
+   ```typescript
+   let wsHandler: ((e: MessageEvent) => void) | null = null;
+   // init:
+   wsHandler = (e) => { /* ... */ };
+   window.siyuan?.ws?.ws?.addEventListener("message", wsHandler);
+   // destroy:
+   window.siyuan?.ws?.ws?.removeEventListener("message", wsHandler);
+   wsHandler = null;
+   ```
+
+4. **传递 passive 选项** — `forEach(([event, handler, options]) => addEventListener(event, handler, options))`，不要丢弃第三参数。
+
+**参考实现**：`src/modules/cursor.ts`（commit f1d5431 之后）。
+
+---
+
 ## Task 4: 打字机模式模块
 
 **Files:**
