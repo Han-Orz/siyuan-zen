@@ -11,3 +11,6 @@ index.js.map
 # Local editor/agent config (not project code)
 .opencode/
 
+
+# SDD process artifacts (session-local)
+.superpowers/
