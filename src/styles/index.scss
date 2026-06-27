@@ -1,0 +1,64 @@
+// zenType 全局样式
+
+// ===== 顺滑光标 =====
+
+#zentype-cursor {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  width: 3px;
+  background: var(--zt-cursor-color, #5d8cd7);
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  backface-visibility: hidden;
+  transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1),
+              height 0.15s ease;
+  opacity: 1;
+}
+
+#zentype-cursor.hidden {
+  opacity: 0 !important;
+  transition: none !important;
+}
+
+#zentype-cursor.breathing {
+  animation: zentype-blink 3s 1.5s ease-in-out infinite;
+}
+
+@keyframes zentype-blink {
+  0%   { opacity: 1; }
+  60%  { opacity: 0.9; }
+  90%  { opacity: 0; }
+  95%  { opacity: 0; }
+  100% { opacity: 0.3; }
+}
+
+[data-theme-mode="dark"] {
+  --zt-cursor-color: #8ab4f8;
+}
+
+// 隐藏原生光标（仅在编辑器内）
+.protyle-wysiwyg { caret-color: transparent; }
+.protyle-title__input { caret-color: transparent; }
+
+// ===== 打字机高亮条 =====
+
+#zentype-highlight-line {
+  position: fixed;
+  pointer-events: none;
+  z-index: 1;
+  width: 100%;
+  height: 0;
+  background: var(--zt-highlight-bg, rgba(242, 236, 222, 0.6));
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.15s ease, opacity 0.3s ease-out;
+  opacity: 0;
+}
+
+#zentype-highlight-line.visible {
+  opacity: 1;
+}
+
+[data-theme-mode="dark"] {
+  --zt-highlight-bg: rgba(54, 52, 51, 0.45);
+}
