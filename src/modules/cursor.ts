@@ -181,10 +181,8 @@ function doUpdateCursor(): void {
     cursorEl?.classList.remove("no-transition");
   });
 
-  // 7) 恢复呼吸（仅在聚焦模式开启时；关闭时永久暂停不呼吸）
-  if (inputMode.isFocusActive()) {
-    scheduleResumeBreathe();
-  }
+  // 7) 恢复呼吸（光标始终呼吸，与聚焦模式解耦）
+  scheduleResumeBreathe();
 
   // 8) round 3 P1：绑定 ResizeObserver / Popover 拖动 / 滚动容器事件
   //    这些 bind 函数内部有"已绑定"去重（lastBound / scrollEventBindings 包含检查 / popoverDragBinding）
@@ -336,15 +334,11 @@ export function initCursor(): void {
   cursorEl = createCursorElement();
   initBreathing(cursorEl);
 
-  // P2: 订阅聚焦模式变化 → 控制呼吸
-  // 关闭时永久暂停呼吸，开启时恢复
+  // commit C fix：呼吸与聚焦模式解耦，光标始终呼吸；仅在聚焦模式开启时
+  // 通过 inputMode.subscribe 触发 scheduleResumeBreathe 同步开启瞬间。
   unsubInputMode = inputMode.subscribe((state) => {
     if (!cursorEl) return;
-    if (state.focusActive) {
-      scheduleResumeBreathe();
-    } else {
-      pauseBreathe();
-    }
+    if (state.focusActive) scheduleResumeBreathe();
   });
 
   // 聚焦/打字机模式：wheel/touchmove 退出处理（不涉及 scroll，避免程序滚动误退出）
