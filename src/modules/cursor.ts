@@ -26,7 +26,7 @@
  */
 
 import type { IProtyle, IWebSocketData } from "siyuan/types";
-import { CURSOR_CONFIG, EDGE_FADE } from "../config";
+import { CURSOR_CONFIG, EDGE_ARROW, EDGE_FADE, SQUISH_BOUNCE } from "../config";
 import { getCursorRect } from "../utils/getCursorRect";
 import { findAllScrollableAncestors } from "../utils/scroll";
 import { isInAllowElements } from "./cursor/boundary";
@@ -51,6 +51,10 @@ let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round
 let resumeBreatheTimer: ReturnType<typeof setTimeout> | null = null; // commit A fix：复用 setTimeout，避免堆叠；destroy 时清理
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
 let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 2/3 复用
+let wasOffScreen: boolean = false; // commit 2：上一帧是否离屏，用于检测穿越事件
+let squishAnimTimer: ReturnType<typeof setTimeout> | null = null; // commit 2：squish/bounce class 清理定时器
+let arrowEl: HTMLDivElement | null = null; // commit 3：视口边缘箭头 DOM 引用
+let arrowVisible = false; // commit 3：箭头可见状态（避免重复写 class）
 
 function markKeyboardPending(): void {
   pendingKeyboardUpdate = true;
@@ -124,6 +128,103 @@ function applyFadeAndScale(
   el.style.height = `${pos.height}px`;
 }
 
+/**
+ * commit 2：触发 squash 一次性动画（光标离开视口时）。
+ * 强制 reflow 让 class 重新计算动画起点，避免快速连续触发时动画不重启。
+ */
+function triggerSquishAnimation(el: HTMLDivElement): void {
+  el.classList.remove("squishing", "bouncing");
+  // 强制 reflow：让浏览器记录"无动画"状态，使后续 add 视为新动画
+  void el.offsetHeight;
+  el.classList.add("squishing");
+  if (squishAnimTimer !== null) clearTimeout(squishAnimTimer);
+  squishAnimTimer = setTimeout(() => {
+    el.classList.remove("squishing");
+    squishAnimTimer = null;
+  }, SQUISH_BOUNCE.SQUISH_DURATION + 20); // +20ms 安全余量
+}
+
+/**
+ * commit 2：触发 bounce 一次性动画（光标返回视口时）。
+ * 与 triggerSquishAnimation 同结构，便于连续穿越时快速切换。
+ */
+function triggerBounceAnimation(el: HTMLDivElement): void {
+  el.classList.remove("squishing", "bouncing");
+  void el.offsetHeight;
+  el.classList.add("bouncing");
+  if (squishAnimTimer !== null) clearTimeout(squishAnimTimer);
+  squishAnimTimer = setTimeout(() => {
+    el.classList.remove("bouncing");
+    squishAnimTimer = null;
+  }, SQUISH_BOUNCE.BOUNCE_DURATION + 20);
+}
+
+/**
+ * commit 3：创建或获取 #zentype-edge-arrow DOM 元素。
+ * 整个插件生命周期内只创建一次（id 选择器查重），之后复用。
+ */
+function createArrowElement(): HTMLDivElement {
+  let el = document.getElementById("zentype-edge-arrow") as HTMLDivElement | null;
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = "zentype-edge-arrow";
+  el.style.cssText = "position: fixed; pointer-events: none;";
+  el.setAttribute("data-direction", "none");
+  document.body.appendChild(el);
+  return el;
+}
+
+/**
+ * commit 3：计算箭头在视口边缘的位置，水平方向对齐光标 x 并 clamp 到视口内。
+ * y 由 CSS 的 `top`/`bottom` + OFFSET 控制，JS 仅负责 x 与 y 一致性回退。
+ */
+function getOffScreenArrowPosition(
+  cursorX: number,
+  cursorY: number,
+  direction: "up" | "down",
+): { x: number; y: number } {
+  const vpW = window.innerWidth;
+  const vpH = window.innerHeight;
+  const halfSize = EDGE_ARROW.SIZE / 2;
+
+  let x: number;
+  let y: number;
+  if (direction === "up") {
+    y = EDGE_ARROW.OFFSET;
+    x = Math.max(halfSize, Math.min(vpW - halfSize, cursorX));
+  } else {
+    y = vpH - EDGE_ARROW.OFFSET;
+    x = Math.max(halfSize, Math.min(vpW - halfSize, cursorX));
+  }
+  // cursorY 在当前实现中未使用（左右方向未启用），保留形参以匹配规格签名
+  void cursorY;
+  return { x, y };
+}
+
+/**
+ * commit 3：显示箭头。从 currentEdge 模块变量读取当前光标坐标定位。
+ */
+function showArrow(direction: "up" | "down"): void {
+  if (!arrowEl) arrowEl = createArrowElement();
+  const cursorX = currentEdge?.cursorX ?? 0;
+  const cursorY = currentEdge?.cursorY ?? 0;
+  const { x, y } = getOffScreenArrowPosition(cursorX, cursorY, direction);
+  arrowEl.style.left = `${x}px`;
+  arrowEl.style.top = `${y}px`;
+  arrowEl.setAttribute("data-direction", direction);
+  arrowEl.classList.add("visible");
+  arrowVisible = true;
+}
+
+/**
+ * commit 3：隐藏箭头。仅移除 .visible 类（data-direction 保留以便排查）。
+ */
+function hideArrow(): void {
+  if (!arrowEl || !arrowVisible) return;
+  arrowEl.classList.remove("visible");
+  arrowVisible = false;
+}
+
 /** rAF 节流入口：每帧最多执行一次 doUpdateCursor() */
 function queueUpdate(): void {
   if (pendingFrame !== null) return;
@@ -190,6 +291,34 @@ function doUpdateCursor(): void {
     pauseBreathe();
     scheduleResumeBreathe();
     return;
+  }
+
+  // commit 3：视口边缘箭头指示器
+  //   仅在编辑器主区（allowed && !isOuterElement）生效；case A 已在前面早退
+  //   离屏时按 nearest edge 上下方向显示；其他情况（左右边缘、视口内）隐藏
+  if (allowed.isOuterElement === true) {
+    hideArrow();
+  } else if (allowed.isOuterElement === false && edge.edge === "top" && edge.isOffScreen) {
+    showArrow("up");
+  } else if (allowed.isOuterElement === false && edge.edge === "bottom" && edge.isOffScreen) {
+    showArrow("down");
+  } else if (allowed.allowed === true) {
+    hideArrow();
+  }
+
+  // commit 2：检测视口穿越事件（用于一次性 squash / bounce 动画）
+  //   仅在编辑器主区（case C）触发；case A / case B / 标题区早退，不会误触发
+  //   wasOff=false → true  离开视口 → 触发 squash
+  //   wasOff=true → false 返回视口 → 触发 bounce
+  if (cursorEl) {
+    const wasOff = wasOffScreen;
+    const isOff = edge.isOffScreen;
+    if (!wasOff && isOff) {
+      triggerSquishAnimation(cursorEl);
+    } else if (wasOff && !isOff) {
+      triggerBounceAnimation(cursorEl);
+    }
+    wasOffScreen = isOff;
   }
 
   // 4) zIndex：取编辑器祖先链上最近的层叠上下文 + 1，再与思源全局 zIndex + 1 取大值
@@ -526,6 +655,8 @@ export function destroyCursor(): void {
   // 移除 DOM 元素
   if (cursorEl) {
     cursorEl.remove();
+    // commit 2：DOM 移除前清理动画 class（确保 destroy 时无残留动画）
+    cursorEl.classList.remove("squishing", "bouncing");
     cursorEl = null;
   }
 
@@ -566,6 +697,20 @@ export function destroyCursor(): void {
   // commit 1：重置边缘交互状态
   lastGoodCursorPos = null;
   currentEdge = null;
+
+  // commit 2：重置 squash / bounce 状态 + 清理动画定时器
+  wasOffScreen = false;
+  if (squishAnimTimer !== null) {
+    clearTimeout(squishAnimTimer);
+    squishAnimTimer = null;
+  }
+
+  // commit 3：移除箭头 DOM 元素 + 重置可见状态
+  if (arrowEl) {
+    arrowEl.remove();
+    arrowEl = null;
+  }
+  arrowVisible = false;
 }
 
 // ============== P2: EventBus 回调（由 index.ts 订阅并调用） ==============

@@ -25,6 +25,10 @@ export interface EdgeProximity {
   isOffScreen: boolean;
   /** 各边缘原始带符号距离（正=内，负=外）。 */
   raw: { top: number; bottom: number; left: number; right: number };
+  /** 光标矩形 x 坐标（视口空间），供 commit 3 箭头定位。 */
+  cursorX: number;
+  /** 光标矩形 y 坐标（视口空间），供 commit 3 箭头定位。 */
+  cursorY: number;
 }
 
 const EDGE_NAMES: ReadonlyArray<"top" | "bottom" | "left" | "right"> = [
@@ -77,5 +81,7 @@ export function getEdgeProximity(rect: CursorRect): EdgeProximity {
     factor,
     isOffScreen,
     raw,
+    cursorX: rect.x,
+    cursorY: rect.y,
   };
 }

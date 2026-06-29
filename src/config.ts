@@ -62,6 +62,26 @@ export const EDGE_FADE = {
   MIN_SCALE: 0.6,
 } as const;
 
+/** 边缘交互：穿越视口边界时的一次性 squash / bounce 动画。 */
+export const SQUISH_BOUNCE = {
+  /** squash（压缩）阶段时长（ms）。 */
+  SQUISH_DURATION: 300,
+  /** bounce（回弹）阶段时长（ms）。 */
+  BOUNCE_DURATION: 400,
+} as const;
+
+/** 边缘交互：视口边缘方向箭头指示器。 */
+export const EDGE_ARROW = {
+  /** 箭头显示时的透明度（0–1）。 */
+  OPACITY: 0.6,
+  /** 三角形大小（px），即箭头指针高度。 */
+  SIZE: 12,
+  /** 距视口边缘的距离（px），箭头与边缘留此间距。 */
+  OFFSET: 8,
+  /** 淡入淡出过渡时长（ms），对应 CSS transition。 */
+  TRANSITION_MS: 200,
+} as const;
+
 /* ---------------------------------------------------------------------------
  * 尚未开放的行为开关（hooks for P2+）：
  *   - CURSOR_SMOOTH_ENABLED       （关闭后光标瞬移，需同时删 SCSS transition）
