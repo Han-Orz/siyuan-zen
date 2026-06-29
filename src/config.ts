@@ -54,6 +54,14 @@ export const RIPPLE_CONFIG = {
   IDLE_THRESHOLD: 2000,
 } as const;
 
+/** 边缘交互：光标接近视口边缘时的淡出 + 缩放。 */
+export const EDGE_FADE = {
+  /** 距视口边缘的距离（px），淡出 + 缩放在此范围内完成。 */
+  ZONE: 60,
+  /** 光标完全离开视口时的最小缩放系数。 */
+  MIN_SCALE: 0.6,
+} as const;
+
 /* ---------------------------------------------------------------------------
  * 尚未开放的行为开关（hooks for P2+）：
  *   - CURSOR_SMOOTH_ENABLED       （关闭后光标瞬移，需同时删 SCSS transition）

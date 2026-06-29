@@ -9,9 +9,12 @@
   width: 3px;
   background: var(--zt-cursor-color, #5d8cd7);
   transform: translate3d(0, 0, 0);
-  will-change: transform, height;
+  will-change: transform, height, opacity; // commit 1：加入 opacity 走合成层
   backface-visibility: hidden;
-  transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+  // commit 1：transform-origin 顶部居中，缩放时保持顶边（caret 对齐线）固定
+  transform-origin: top center;
+  // commit 1：transition 加入 opacity 0.15s ease-out，淡出 / 恢复平滑
+  transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out;
   opacity: 1;
   // 默认开启呼吸动画；breathing.ts 通过 .no-animation 暂停
   animation: zentype-breathe 3.5s linear infinite;
