@@ -156,7 +156,10 @@ function doUpdateCursor(): void {
   cursorEl.style.zIndex = String(Math.max(effectiveZ + 1, siyuanZ + 1));
 
   // 5) 写 transform + height
-  cursorEl.style.transform = `translate3d(${rect.x}px, ${rect.y}px, 0)`;
+  //   yOffset：光标上移 N 像素，让光标视觉重心偏到行中线之上（用户偏好）。
+  //   HEIGHT_RATIO > 1 时光标下沿超出 lineHeight，光标看起来仍偏下；微调上移抵消。
+  const yOffset = 2;
+  cursorEl.style.transform = `translate3d(${rect.x}px, ${rect.y - yOffset}px, 0)`;
   cursorEl.style.height = `${rect.height}px`;
 
   // 首次移动跳过过渡（避免从 (0,0) 滑到实际位置的"飞来"动画）
