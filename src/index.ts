@@ -14,6 +14,7 @@ import {
 } from "./modules/cursor";
 import { initTypewriter, destroyTypewriter } from "./modules/typewriter";
 import { initRipple, destroyRipple } from "./modules/ripple";
+import * as inputMode from "./modules/inputMode";
 import type { ModuleEnabled, ModuleName } from "./types";
 import mainCss from "./styles/index.scss";
 
@@ -59,6 +60,18 @@ export default class ZenType extends Plugin {
       langKey: "toggle-all",
       callback: () => this.toggleAll(),
     });
+    this.addCommand({
+      langKey: "toggle-focus-mode",
+      callback: () => {
+        inputMode.simulateFocusInput();
+      },
+    });
+    this.addCommand({
+      langKey: "toggle-typewriter-mode",
+      callback: () => {
+        inputMode.simulateTypewriterInput();
+      },
+    });
 
     const allOn = this.isAllEnabled();
     this.addTopBar({
@@ -91,9 +104,10 @@ export default class ZenType extends Plugin {
       eventBus.off("loaded-protyle-dynamic", onLoadedDynamic),
     );
 
-    // 3) switch-protyle：切 Tab
+    // 3) switch-protyle：切 Tab → 光标更新 + 聚焦/打字机模式退出
     const onSwitched = (e: CustomEvent<{ protyle: IProtyle }>) => {
       if (!this.enabled.cursor) return;
+      inputMode.setBothOff();
       onProtyleSwitched(e.detail.protyle);
     };
     eventBus.on("switch-protyle", onSwitched);
@@ -168,6 +182,7 @@ export default class ZenType extends Plugin {
     destroyCursor();
     destroyTypewriter();
     destroyRipple();
+    inputMode.reset();
     removeStyle(STYLE_ID);
     console.log("zenType v2 unloaded");
   }

@@ -4,6 +4,7 @@ import type { CursorRect } from "../types";
 import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
 import { getEffectiveZIndex } from "../utils/getEffectiveZIndex";
+import * as inputMode from "./inputMode";
 
 const HIGHLIGHT_ID = "zentype-highlight-line";
 const { TARGET_RATIO, THRESHOLD, DURATION } = TYPEWRITER_CONFIG;
@@ -70,6 +71,12 @@ function smoothScroll(target: HTMLElement, deltaY: number): void {
 }
 
 function checkAndScroll(): void {
+  // 打字机模式关闭时：不显示高亮条，不自动滚动
+  if (!inputMode.isTypewriterActive()) {
+    highlightEl?.classList.remove("visible");
+    return;
+  }
+
   if (shouldPauseTypewriter()) {
     highlightEl?.classList.remove("visible");
     return;

@@ -38,6 +38,7 @@ import {
   resumeBreathe,
   destroyBreathing,
 } from "./cursor/breathing";
+import * as inputMode from "./inputMode";
 
 const CURSOR_ID = "zentype-cursor";
 
@@ -52,6 +53,15 @@ let protyleContentObserver: ResizeObserver | null = null;
 let protyleWysiwygObserver: ResizeObserver | null = null;
 let lastBoundProtyleContent: HTMLElement | null = null;
 let lastBoundProtyleWysiwyg: HTMLElement | null = null;
+
+// ── 聚焦/打字机模式辅助状态 ──
+let isPasting = false;
+let unsubInputMode: (() => void) | null = null;
+
+interface MouseDownInfo {
+  selectionText: string;
+}
+let mouseDownInfo: MouseDownInfo | null = null;
 
 interface ScrollEventBinding {
   el: HTMLElement;
@@ -160,8 +170,10 @@ function doUpdateCursor(): void {
     cursorEl?.classList.remove("no-transition");
   });
 
-  // 7) 500ms 后恢复呼吸
-  scheduleResumeBreathe();
+  // 7) 恢复呼吸（仅在聚焦模式开启时；关闭时永久暂停不呼吸）
+  if (inputMode.isFocusActive()) {
+    scheduleResumeBreathe();
+  }
 
   // 8) round 3 P1：绑定 ResizeObserver / Popover 拖动 / 滚动容器事件
   //    这些 bind 函数内部有"已绑定"去重（lastBound / scrollEventBindings 包含检查 / popoverDragBinding）
@@ -310,6 +322,35 @@ export function initCursor(): void {
   cursorEl = createCursorElement();
   initBreathing(cursorEl);
 
+  // P2: 订阅聚焦模式变化 → 控制呼吸
+  // 关闭时永久暂停呼吸，开启时恢复
+  unsubInputMode = inputMode.subscribe((state) => {
+    if (!cursorEl) return;
+    if (state.focusActive) {
+      scheduleResumeBreathe();
+    } else {
+      pauseBreathe();
+    }
+  });
+
+  // 聚焦/打字机模式：wheel/touchmove 退出处理（不涉及 scroll，避免程序滚动误退出）
+  const onWheelExit: EventListener = () => {
+    inputMode.setBothOff();
+    onScrollOrWheel();
+  };
+
+  // 聚焦/打字机模式：鼠标拖蓝检测（mouseup 时比对比 selection 变化）
+  const onMouseUpWithDragCheck: EventListener = () => {
+    if (mouseDownInfo) {
+      const currentSel = window.getSelection()?.toString() ?? "";
+      if (currentSel !== mouseDownInfo.selectionText && currentSel.length > 0) {
+        inputMode.setBothOff();
+      }
+      mouseDownInfo = null;
+    }
+    queueUpdate();
+  };
+
   // DOM 事件绑定（passive 提升滚动性能）
   // round 3：移除三阶段 throttle（200/400/600ms），改用 keydown/input 配 rAF 包裹。
   // compositionend + input 已覆盖 IME / 自动换行延迟场景。
@@ -318,20 +359,51 @@ export function initCursor(): void {
     // keydown + input 用 rAF 包裹（参考版做法），替代三阶段 throttle
     // round 4 fix：先 set flag，下一次 doUpdateCursor 末尾 reset；
     // 让 Enter 触发的 scroll/ResizeObserver 知道本次更新是键盘驱动，不加 .no-transition
-    ["keydown", () => { pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate); }],
-    ["input", () => { pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate); }],
-    ["mouseup", queueUpdate],
-    ["click", queueUpdate],
+    // 聚焦/打字机模式：↑↓/PageUp/PageDown 退出；←→/Home/End/Escape 保持
+    ["keydown", (e) => {
+      const ke = e as KeyboardEvent;
+      if (ke.key === "ArrowUp" || ke.key === "ArrowDown" ||
+          ke.key === "PageUp" || ke.key === "PageDown") {
+        inputMode.setBothOff();
+      }
+      pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate);
+    }],
+    // 聚焦/打字机模式：输入事件开启（粘贴时跳过）
+    ["input", () => {
+      if (!isPasting) inputMode.setBothOn();
+      isPasting = false;
+      pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate);
+    }],
+    // mouseup：已有 cursor 更新 + 拖蓝检测
+    ["mouseup", onMouseUpWithDragCheck],
+    // 聚焦/打字机模式：鼠标点击退出
+    ["click", () => {
+      inputMode.setBothOff();
+      queueUpdate();
+    }],
     [
       "scroll",
       onScrollOrWheel as EventListener,
       { capture: true, passive: true },
     ],
-    ["wheel", onScrollOrWheel as EventListener, { passive: true }],
-    ["touchmove", onScrollOrWheel as EventListener, { passive: true }],
-    ["compositionend", queueUpdate],
+    // 聚焦/打字机模式：wheel/touchmove 退出
+    ["wheel", onWheelExit, { passive: true }],
+    ["touchmove", onWheelExit, { passive: true }],
+    // 聚焦/打字机模式：IME 完成开启
+    ["compositionend", () => {
+      inputMode.setBothOn();
+      queueUpdate();
+    }],
     // resize 时刷新（思源侧边栏拖动会触发）
     ["resize", queueUpdate, { passive: true }],
+    // 聚焦/打字机模式：粘贴标记（跳过 input 开启）
+    ["paste", () => { isPasting = true; }],
+    // 聚焦/打字机模式：拖蓝起点记录
+    ["mousedown", (e) => {
+      mouseDownInfo = { selectionText: window.getSelection()?.toString() ?? "" };
+    }],
+    // 聚焦/打字机模式：失焦退出
+    ["blur", () => { inputMode.setBothOff(); }],
   ];
 
   handlers.forEach(([event, handler, options]) => {
@@ -352,6 +424,12 @@ export function destroyCursor(): void {
     document.removeEventListener(event, handler);
   });
   eventListeners = [];
+
+  // P2: 退订聚焦模式变化
+  if (unsubInputMode) {
+    unsubInputMode();
+    unsubInputMode = null;
+  }
 
   // P2: WS 监听已迁移到 EventBus（由 index.ts 的 eventBusOffFns 在 onunload 时清理）
 

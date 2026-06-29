@@ -2,6 +2,7 @@ import { getCursorElement } from "../utils/getCursorElement";
 import { shouldPauseFocusAndTypewriter, isReadMode } from "../utils/edgeCases";
 import type { RippleMode } from "../types";
 import { RIPPLE_CONFIG } from "../config";
+import * as inputMode from "./inputMode";
 
 /**
  * 涟漪聚焦模块 - 文本/鼠标双模式状态机
@@ -54,6 +55,12 @@ function applyRipple(): void {
   if (pendingFrame !== null) return;
   pendingFrame = requestAnimationFrame(() => {
     pendingFrame = null;
+
+    // 聚焦模式关闭时：涟漪完全不工作（包括 mouse 模式）
+    if (!inputMode.isFocusActive()) {
+      clearAllOpacity();
+      return;
+    }
 
     if (shouldPauseFocusAndTypewriter()) {
       // 暂停时清除所有 opacity 覆盖，恢复默认
