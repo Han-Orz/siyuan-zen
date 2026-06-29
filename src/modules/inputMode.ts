@@ -21,15 +21,16 @@ const subscribers = new Set<Subscriber>();
 
 function notify(): void {
   const state = { focusActive, typewriterActive };
-  subscribers.forEach((cb) => cb(state));
+  subscribers.forEach((cb) => {
+    try { cb(state); } catch (e) { console.error("[zenType] inputMode subscriber threw:", e); }
+  });
 }
 
 /** 订阅状态变化；返回退订函数。 */
 export function subscribe(cb: Subscriber): () => void {
   subscribers.add(cb);
-  return () => {
-    subscribers.delete(cb);
-  };
+  cb({ focusActive, typewriterActive });
+  return () => { subscribers.delete(cb); };
 }
 
 // ── 外部触发 API ──────────────────────────────────────────────────────
