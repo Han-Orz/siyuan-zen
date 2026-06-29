@@ -27,11 +27,11 @@
  */
 
 export const CURSOR_CONFIG = {
-  /** 光标高度 = 所在行 lineHeight × 此倍数。参考版用 0.88；用户硬性要求 1.1（光标更饱满）。 */
-  HEIGHT_RATIO: 1.1,
+  /** 光标高度 = 所在行 lineHeight × 此倍数。参考版用 0.88；用户要求 1.05（稍短，减少对行的视觉覆盖）。 */
+  HEIGHT_RATIO: 1.05,
 
-  /** 光标停止活动后多少毫秒恢复呼吸闪烁。 */
-  BLINK_DELAY_MS: 500,
+  /** 光标停止活动后多少毫秒恢复呼吸闪烁（Phase 1 → Phase 2 的间隔）。 */
+  BLINK_DELAY_MS: 1500,
 } as const;
 
 /** 打字机高亮条参数（光标保持在 38% 位置时滚动到屏幕中心）。 */
