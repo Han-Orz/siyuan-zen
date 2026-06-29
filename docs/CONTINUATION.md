@@ -5,7 +5,14 @@
 
 ---
 
-## 🔄 最新工作（2026-06-29，未提交）
+## 🔄 最新工作（2026-06-30，HEAD = `58d20f6`，16 commits ahead of origin）
+
+> **⚠️ Known Issues — see [docs/TODO.md](TODO.md)** for 4 known bugs/UX issues
+> discovered during user testing on 2026-06-30 (after Plan 6 landed).
+> - TODO-1: Initial cursor position transition is janky
+> - TODO-2: Edge arrow indicator not needed (decision: disable via config flag)
+> - TODO-3: Edge definition too loose — `FADE_ZONE = 60px` is too aggressive
+> - TODO-4: Scroll direction asymmetry (UP works, DOWN doesn't)
 
 ### Round 5-11 完整光标优化 已完成
 
@@ -17,6 +24,15 @@
 | Round 9 | P1 + 动画 + A1-A9 兼容性 | ✅ shipped |
 | Round 10 | 直角矩形 + 参数可配置 + 文档更新 | ✅ shipped |
 | **Round 11** | **P2 EventBus 迁移 + 代码清理 + Reviewer 批准** | ✅ **shipped** |
+| **Plan 6** | **Edge interaction: Fade+Scale + Squash/Bounce + Arrow** | ✅ **shipped (2 commits, see note)** |
+
+> **Plan 6 commit structure note**: The plan was originally 3 separate commits
+> (Commit 1: Fade+Scale, Commit 2: Squash/Bounce, Commit 3: Arrow). In practice
+> Squash/Bounce and Arrow were **combined into a single commit (58d20f6)** —
+> Commit 1 = `68297da`, Commit 2+3 combined = `58d20f6`. This means reverting
+> the arrow (per TODO-2) cannot be done with `git revert` alone, since the
+> commit also contains squash/bounce. See `docs/TODO.md` TODO-2 for the
+> recommended resolution (Option C: add `EDGE_ARROW.ENABLED: false` flag).
 
 ### 本次会话关键改动（**未提交到 git**）
 - **Round 11 P2**：新建 `src/utils/scroll.ts` 集中滚动工具；`cursor.ts` 删 `wsHandler` + 手动 WS + 白名单；`index.ts` 订阅 9 个 EventBus 事件（`eventBusOffFns` 数组统一管理）；`isMobile.ts` / `edgeCases.ts` / `typewriter.ts` 改用 `getActiveEditor()` / `getFrontend()`；`activeProtyleIds` Set + `click-editorcontent` 驱动
@@ -47,11 +63,17 @@
 
 - **仓库**：`Han-Orz/siyuan-zen`（GitHub）
 - **本地路径**：`D:\Documents\GitHub\zenType`
-- **HEAD commit**：`8fa3a1f`（docs: add v1.0.6 upgrade notice）
+- **HEAD commit**：`58d20f6`（feat(cursor): viewport edge arrow indicator — Plan 6 squash/bounce+arrow combined）
+- **Branch**：`fix/v2.2.0-cursor-optimization`
+- **Ahead of origin**：16 commits (Plan 6 + 10 other fixes since 8e0f2e9)
 - **最新 release**：v2.0.0 @ https://github.com/Han-Orz/siyuan-zen/releases/tag/v2.0.0
 - **集市状态**：1-3 小时内自动索引
 - **GitHub issue #4**（88250 改名要求）：✅ 已关闭
 - **GitHub `Han-Orz/zenType` 仓库**：保留为空壳（用户后期可能复用）
+
+### Untracked files（user accepted, do not add）
+- `package-lock.json` — intentionally left untracked (user choice; relying on `pnpm-lock.yaml` instead)
+- `docs/CURSOR_ANIMATION_DECISIONS.md`, `docs/FOCUS_TYPEWRITER_DESIGN.md`, `docs/superpowers/plans/2026-06-30-plan-6-edge-interaction.md` — also untracked; will be added in the docs-update commit
 
 ### v1.0.6 → v2.0.0 关键变化
 

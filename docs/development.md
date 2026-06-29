@@ -139,7 +139,69 @@ pnpm build
 
 ---
 
+## 同步工作流（Plan 6 之后 / 2026-06-30+）
+
+> 自从 `58d20f6` 落地后，每次改完 `src/` 代码并 `pnpm run build:dev`，
+> 思源工作区里的 5 个文件需要同步更新。可以用 PowerShell 一键搞定：
+
+```powershell
+# 一次性：定位你的思源插件目录
+$siyuanPlugin = "D:\SiYuan\data\plugins\siyuan-zen"
+
+# 改完代码 → build → 同步这 5 个文件
+pnpm run build:dev
+Copy-Item -Force `
+  "dev\icon.png", `
+  "dev\index.js", `
+  "dev\index.js.map", `
+  "dev\plugin.json", `
+  "dev\preview.png" `
+  -Destination $siyuanPlugin
+
+# 思源里：插件 → 焦点写作 → 禁用 → 启用（触发热重载）
+```
+
+**这 5 个文件分别是什么**：
+
+| 文件 | 作用 |
+|---|---|
+| `icon.png` | 插件图标（思源侧栏显示） |
+| `index.js` | 编译后的 JS 入口（必同步） |
+| `index.js.map` | Source map（调试用，可选但推荐） |
+| `plugin.json` | 插件元数据（name/version/description） |
+| `preview.png` | 集市预览图（v2.0+ 用） |
+
+**如果只改了 `src/` 里的 TS/SCSS**：上面脚本会覆盖 `index.js` 和 `index.js.map`，其它 3 个文件 hash 不会变（已构建的产物一致）。
+
+**如果改了 `plugin.json` / `icon.png` / `preview.png`**：也需要重新 `pnpm run build`（生产模式）才能在集市发布。开发模式只用 `pnpm run build:dev` 即可。
+
+**常见坑**：
+- 复制时如果思源正在运行，文件可能被锁定 → 先关闭思源再 Copy-Item，或用 `pnpm run dev` 模式（watch 自动写 dev/，符号链接实时同步）
+- `index.js.map` 在生产模式（`pnpm build`）下会带 sourceMappingURL，调试时浏览器自动加载；开发模式不带
+
+---
+
 ## 常见问题
+
+### `package-lock.json` 怎么没在 git 里？
+
+`package-lock.json` **目前是 untracked 状态**（不是 .gitignored，但也没 commit）。这是 2026-06-30 的有意决定：
+
+- 项目用 `pnpm`，版本锁定靠 `pnpm-lock.yaml`（已 commit）
+- `package-lock.json` 是 `npm` 生成的，本项目用不到
+- 如果你看到 `git status` 把它列在 untracked files，**不要 `git add` 它**
+
+```powershell
+# 验证它真的不该被 add
+git check-ignore -v package-lock.json
+# 输出：.gitignore:xx:package-lock.json  → 说明被 ignore（但当前其实没被 ignore，只是 untracked）
+```
+
+如果想确认 lockfile 健康：
+
+```bash
+pnpm install --frozen-lockfile   # 不修改 lockfile，验证 lockfile 和 package.json 一致
+```
 
 ### `pnpm install` 报 `ERR_PNPM_IGNORED_BUILDS` 错？
 
