@@ -61,15 +61,27 @@ export default class ZenType extends Plugin {
       callback: () => this.toggleAll(),
     });
     this.addCommand({
-      langKey: "toggle-focus-mode",
+      langKey: "enable-focus-mode",
       callback: () => {
         inputMode.simulateFocusInput();
       },
     });
     this.addCommand({
-      langKey: "toggle-typewriter-mode",
+      langKey: "enable-typewriter-mode",
       callback: () => {
         inputMode.simulateTypewriterInput();
+      },
+    });
+    this.addCommand({
+      langKey: "disable-focus-mode",
+      callback: () => {
+        inputMode.disableFocus();
+      },
+    });
+    this.addCommand({
+      langKey: "disable-typewriter-mode",
+      callback: () => {
+        inputMode.disableTypewriter();
       },
     });
 

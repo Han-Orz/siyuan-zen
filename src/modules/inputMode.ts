@@ -65,6 +65,20 @@ export function simulateTypewriterInput(): void {
   notify();
 }
 
+/** 命令："手动关闭聚焦模式" → 仅关闭聚焦模式 */
+export function disableFocus(): void {
+  if (!focusActive) return;
+  focusActive = false;
+  notify();
+}
+
+/** 命令："手动关闭打字机模式" → 仅关闭打字机模式 */
+export function disableTypewriter(): void {
+  if (!typewriterActive) return;
+  typewriterActive = false;
+  notify();
+}
+
 // ── 查询 API ──────────────────────────────────────────────────────────
 
 export function isFocusActive(): boolean {
