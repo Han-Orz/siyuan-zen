@@ -1,7 +1,7 @@
 {
-  "name": "zenType",
-  "author": "zenType Developer",
-  "url": "https://github.com/your-username/zenType",
+  "name": "siyuan-zen",
+  "author": "Han-Orz",
+  "url": "https://github.com/Han-Orz/siyuan-zen",
   "version": "2.0.0",
   "minAppVersion": "3.0.12",
   "backends": ["all"],
