@@ -14,7 +14,7 @@
   transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
   opacity: 1;
   // 默认开启呼吸动画；breathing.ts 通过 .no-animation 暂停
-  animation: zentype-breathe 3s 1.5s ease-in-out infinite;
+  animation: zentype-breathe 3.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 // 状态类
@@ -32,13 +32,12 @@
   transition: none !important;
 }
 
-// 呼吸动画关键帧：参考版风格（0.3 尾帧产生 blink 节奏感）
+// 呼吸动画关键帧：Soft Pulse（4-keyframe 自然呼吸，最低 0.15 始终可见）
 @keyframes zentype-breathe {
   0%   { opacity: 1; }
-  60%  { opacity: 0.9; }
-  90%  { opacity: 0; }
-  95%  { opacity: 0; }
-  100% { opacity: 0.3; }
+  40%  { opacity: 0.85; }
+  70%  { opacity: 0.15; }
+  100% { opacity: 0.6; }
 }
 
 [data-theme-mode="dark"] {
