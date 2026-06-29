@@ -95,7 +95,11 @@ function createCursorElement(): HTMLDivElement {
 
   el = document.createElement("div");
   el.id = CURSOR_ID;
-  el.classList.add("hidden");
+  // commit D：DOM 刚创建时 transform 还未设置，默认在 (0,0)。
+  // 直接把 transform 设到屏幕外，避免 initCursor 末端的 queueUpdate → 首次
+  // doUpdateCursor 之间约 16ms 窗口内光标在视口左上角闪现。
+  // doUpdateCursor 首帧会无条件覆盖 transform + 加 .no-transition 关闭过渡。
+  el.style.transform = "translate3d(-9999px, -9999px, 0)";
   document.body.appendChild(el);
   return el;
 }
@@ -113,12 +117,12 @@ function queueUpdate(): void {
  * 核心更新逻辑。
  * 时序：
  *   1. 暂停呼吸（操作中）
- *   2. 读取选区 → getCursorRect（lineHeight × 1.1）
- *   3. 边界检测 → 不通过则 .hidden + return
+ *   2. 读取选区 → getCursorRect（lineHeight × 1.05）
+ *   3. 边界检测 → 不通过则 pauseBreathe + return（光标保留在最后位置，停在 Phase 1）
  *   4. 计算 zIndex（基于 window.siyuan.zIndex + 1）
  *   5. 写 transform / height / zIndex
  *   6. 强制布局同步 → rAF 移除 no-transition
- *   7. setTimeout 500ms 后恢复呼吸
+ *   7. setTimeout 1500ms 后恢复呼吸
  */
 function doUpdateCursor(): void {
   if (!cursorEl) return;
@@ -129,14 +133,16 @@ function doUpdateCursor(): void {
   // 2) 读取选区 → 显示矩形
   const rect = getCursorRect();
   if (!rect || rect.height === 0) {
-    cursorEl.classList.add("hidden");
+    // commit D：光标不消失 —— 让呼吸停在 Phase 1（静态），停留在上一位置
+    pauseBreathe();
     return;
   }
 
   // 3) 边界检测（3 重，round 3 移除第 3 重弹窗硬性排除）
   const allowed = isInAllowElements({ x: rect.x, y: rect.y });
   if (!allowed.allowed) {
-    cursorEl.classList.add("hidden");
+    // commit D：光标不消失 —— 出编辑器区域时停在 Phase 1（静态），保留在最后位置
+    pauseBreathe();
     // 即使隐藏也要恢复呼吸（避免下次显示时呼吸态错乱）
     scheduleResumeBreathe();
     return;
@@ -144,7 +150,8 @@ function doUpdateCursor(): void {
 
   // 移动端标题：可选跳过光标显示（避免移动端键盘弹出时视觉噪音）
   if (isMobile() && allowed.cursorElement?.closest(".protyle-title__input")) {
-    cursorEl.classList.add("hidden");
+    // commit D：标题区域也算"非主编辑区"，光标停在 Phase 1（静态）
+    pauseBreathe();
     scheduleResumeBreathe();
     return;
   }
@@ -521,10 +528,10 @@ export function onEditorContentClicked(_protyle: IProtyle): void {
   queueUpdate();
 }
 
-/** open-menu-content 回调：右键菜单弹出时立即隐藏光标 */
+/** open-menu-content 回调：右键菜单弹出时光标停在 Phase 1（静态），保留在最后位置 */
 export function onMenuOpened(): void {
   if (!cursorEl) return;
-  cursorEl.classList.add("hidden");
+  pauseBreathe();
 }
 
 /** ws-main 回调：替代手动 WS 监听 + JSON.parse（EventBus 已自动解析） */
