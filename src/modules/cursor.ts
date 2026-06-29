@@ -46,6 +46,16 @@ let cursorEl: HTMLDivElement | null = null;
 let pendingFrame: number | null = null;
 let isFirstMove = true; // round 3：首次移动跳过 transition（避免从默认位置"飞来"）
 let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 .no-transition，保留 0.15s 跳移动画
+let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round 4 fix（capture + cooldown）：键盘事件后 150ms 内 scroll/ResizeObserver 知道本次更新是键盘驱动
+
+function markKeyboardPending(): void {
+  pendingKeyboardUpdate = true;
+  if (keyboardCooldownTimer !== null) clearTimeout(keyboardCooldownTimer);
+  keyboardCooldownTimer = setTimeout(() => {
+    pendingKeyboardUpdate = false;
+    keyboardCooldownTimer = null;
+  }, 150);
+}
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 
 // round 3 P1: ResizeObserver / Popover 拖动 / 滚动容器事件
@@ -181,9 +191,9 @@ function doUpdateCursor(): void {
   bindPopoverDrag(allowed.cursorElement);
   bindScrollContainerEvents(allowed.cursorElement);
 
-  // round 4 fix：清键盘标志。下一次 scroll/ResizeObserver 触发时若 flag=false，
-  // 说明当前更新已完成、后续 scroll 不再与键盘同帧，正常加 .no-transition
-  pendingKeyboardUpdate = false;
+  // round 4 fix（capture + cooldown）：键盘标志由 markKeyboardPending 启动的 150ms 倒计时负责清零，
+  // 不再在 doUpdateCursor 末尾同步清掉——倒计时窗口内 SiYuan 同步触发的 scroll/ResizeObserver
+  // 仍能读到 pendingKeyboardUpdate=true，从而跳过 .no-transition 保留 0.15s 跳移动画
 }
 
 function scheduleResumeBreathe(): void {
@@ -360,20 +370,22 @@ export function initCursor(): void {
     // round 4 fix：先 set flag，下一次 doUpdateCursor 末尾 reset；
     // 让 Enter 触发的 scroll/ResizeObserver 知道本次更新是键盘驱动，不加 .no-transition
     // 聚焦/打字机模式：↑↓/PageUp/PageDown 退出；←→/Home/End/Escape 保持
+    // round 4 fix（capture + cooldown）：capture 阶段先于 SiYuan handler 跑，
+    // markKeyboardPending 启动 150ms 倒计时，期间 scroll/ResizeObserver 不加 .no-transition
     ["keydown", (e) => {
       const ke = e as KeyboardEvent;
       if (ke.key === "ArrowUp" || ke.key === "ArrowDown" ||
           ke.key === "PageUp" || ke.key === "PageDown") {
         inputMode.setBothOff();
       }
-      pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate);
-    }],
+      markKeyboardPending(); requestAnimationFrame(queueUpdate);
+    }, { capture: true }],
     // 聚焦/打字机模式：输入事件开启（粘贴时跳过）
     ["input", () => {
       if (!isPasting) inputMode.setBothOn();
       isPasting = false;
-      pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate);
-    }],
+      markKeyboardPending(); requestAnimationFrame(queueUpdate);
+    }, { capture: true }],
     // mouseup：已有 cursor 更新 + 拖蓝检测
     ["mouseup", onMouseUpWithDragCheck],
     // 聚焦/打字机模式：鼠标点击退出
@@ -419,6 +431,13 @@ export function initCursor(): void {
 }
 
 export function destroyCursor(): void {
+  // round 4 fix（capture + cooldown）：清理键盘冷却定时器
+  if (keyboardCooldownTimer !== null) {
+    clearTimeout(keyboardCooldownTimer);
+    keyboardCooldownTimer = null;
+  }
+  pendingKeyboardUpdate = false;
+
   // 清理 DOM 事件
   eventListeners.forEach(([event, handler]) => {
     document.removeEventListener(event, handler);
