@@ -1,0 +1,282 @@
+# 后续会话指南（Handoff Notes）
+
+> **写给未来要继续修复/改进 zenType 的 AI 助手或用户本人。**
+> 当前会话已经把 v2.0.0 从设计到实施到发布全部跑完，下面是接手前必读。
+
+---
+
+## 📍 项目当前状态
+
+- **仓库**：`Han-Orz/siyuan-zen`（GitHub）
+- **本地路径**：`D:\Documents\GitHub\zenType`
+- **HEAD commit**：`8fa3a1f`（docs: add v1.0.6 upgrade notice）
+- **最新 release**：v2.0.0 @ https://github.com/Han-Orz/siyuan-zen/releases/tag/v2.0.0
+- **集市状态**：1-3 小时内自动索引
+- **GitHub issue #4**（88250 改名要求）：✅ 已关闭
+- **GitHub `Han-Orz/zenType` 仓库**：保留为空壳（用户后期可能复用）
+
+### v1.0.6 → v2.0.0 关键变化
+
+| 项目 | v1.0.6 | v2.0.0 |
+|---|---|---|
+| `plugin.json` name | `ZenType` | `siyuan-zen` |
+| 仓库 | `Han-Orz/siyuan-zen` | `Han-Orz/siyuan-zen`（不变） |
+| 代码架构 | 单文件 + 模板 | 单一入口 + 三模块（cursor/typewriter/ripple） |
+| 构建工具 | Vite | esbuild + sass |
+| dev 工作流 | build → zip → 拖入 → 重启 | watch + 符号链接 → 热重载 |
+| 用户操作 | 必须重启思源 | 改代码几秒自动生效 |
+
+---
+
+## 🔧 环境配置（必做，新会话要先确认）
+
+### Windows PowerShell 必备设置
+
+```powershell
+# 1. Node.js 加到 PATH（用户用 corepack 启用 pnpm）
+$env:Path = "D:\scoop\apps\NodeJS-LTS\current;" + $env:Path
+$env:HTTP_PROXY = "http://127.0.0.1:7897"
+$env:HTTPS_PROXY = "http://127.0.0.1:7897"
+
+# 2. pnpm 安装/操作
+pnpm install
+pnpm run build       # 输出 dist/ + 生成 zentype.zip
+pnpm run build:dev   # 输出 dev/
+pnpm run dev         # watch 模式 + 重建到 dev/
+pnpm run link        # 建符号链接（一次性）
+pnpm run clean       # 清理 dist/ + dev/ + *.zip
+
+# 3. 清理代理变量
+Remove-Item Env:HTTP_PROXY
+Remove-Item Env:HTTPS_PROXY
+```
+
+### GitHub CLI 已登录
+
+```powershell
+gh issue list --repo Han-Orz/siyuan-zen --state all --limit 10
+gh release list --repo Han-Orz/siyuan-zen
+```
+
+### 思源工作区路径
+
+- 默认：`C:\Users\Han\SiYuan`
+- 设置环境变量 `SIYUAN_WORKSPACE` 跳过交互
+
+---
+
+## 🐛 待修复的 4 个 Open Issues
+
+```
+#1  [BUG] 光标偏移
+#2  [BUG] 输入后点击不会让其他块变亮
+#3  [功能] 希望给高亮条加独立开关
+#5  [性能] 光标速度过慢
+```
+
+详细分析和代码定位见：
+**审查报告**：`D:\Documents\GitHub\zenType\.superpowers\review\zenType-v2-review.md`
+（`.superpowers/` 是 gitignored 的会话产物，不在 repo 里）
+
+### Issue #5（最简单，建议先修）
+
+- **文件**：`src/styles/index.scss:14-15`
+- **问题**：CSS transition `0.15s` 太慢
+- **修复**：改 `0.08s` 或 `0.1s`
+
+### Issue #2（中等）
+
+- **文件**：`src/modules/ripple.ts:94-104`
+- **问题**：`onSelectionChange()` 不完整触发
+- **修复**：在 `click` 和 `keyup` 事件中强制触发状态更新；考虑添加 `input` 事件监听
+
+### Issue #3（中等，需要重构）
+
+- **文件**：`src/modules/typewriter.ts:102-141` + `src/index.ts:2-4`
+- **问题**：`ModuleEnabled` 缺少细粒度配置
+- **修复**：扩展 `ModuleEnabled` 类型，或把 typewriter 拆为 `scrollToCenter` + `highlightLine` 两个子功能
+
+### Issue #1（中等，需要实机测试）
+
+- **文件**：`src/utils/getCursorRect.ts:19-30` + `src/modules/cursor.ts:46-50`
+- **问题**：`getCursorRect()` fallback 可能返回错误坐标
+- **修复**：增加边界检查，确保光标只在 `.protyle-wysiwyg` 区域内显示
+
+---
+
+## 📋 其他待办事项
+
+### Important（来自审查报告）
+
+- **I-5 删除 build.js 遗留 marker 检查**（`build.js:39-42`，4 行死代码）
+- **添加单元测试**（`getCursorRect`、`edgeCases` 等工具函数）
+
+### Minor（可选）
+
+- M-1：cursor.ts Window 类型声明注释更清晰
+- M-2：typewriter 参数可配置化（`TARGET_RATIO`、`THRESHOLD`、`DURATION`）
+- M-3：ripple.ts `IDLE_THRESHOLD` 可配置化
+- 添加 CHANGELOG.md
+
+---
+
+## 📁 项目结构速查
+
+```
+zenType/
+├── src/
+│   ├── index.ts              # 入口（编排）
+│   ├── modules/
+│   │   ├── cursor.ts         # 顺滑光标
+│   │   ├── typewriter.ts     # 打字机模式（含高亮条）
+│   │   └── ripple.ts         # 涟漪聚焦
+│   ├── utils/
+│   │   ├── getCursorRect.ts  # 光标位置获取
+│   │   ├── edgeCases.ts      # 边界场景判定
+│   │   └── styleManager.ts   # 样式管理
+│   ├── types/
+│   │   ├── index.ts          # ModuleEnabled 等类型
+│   │   └── scss.d.ts         # SCSS 模块声明
+│   └── styles/index.scss     # 全局样式
+├── build.js                  # 构建脚本（esbuild + sass + zip）
+├── plugin.json               # name=siyuan-zen
+├── package.json              # scripts: build/build:dev/dev/link/clean
+├── pnpm-workspace.yaml       # pnpm 11 allowBuilds 配置
+├── tsconfig.json
+├── scripts/make_dev_link.js  # 跨平台符号链接脚本
+├── docs/
+│   ├── README.md             # 英文文档（含升级提示）
+│   ├── README_zh_CN.md       # 中文文档（含升级提示）
+│   ├── development.md        # 开发指南（大白话）
+│   └── superpowers/
+│       ├── specs/2026-06-27-zentype-redesign-design.md  # 设计文档
+│       ├── plans/2026-06-27-zentype-redesign-plan.md    # 实施计划
+│       └── research/2026-06-28-siyuan-plugin-rename-and-dev-workflow.md
+└── 参考/顺滑光标.js          # 用户保留的参考代码（不构建）
+```
+
+---
+
+## 💬 给后续 AI 会话的开场提示词（可直接复制）
+
+### 提示词 A：修复单个 issue（推荐）
+
+```
+你是一个接手的 AI 助手，要修复思源笔记插件 siyuan-zen 的 Issue #<编号>。
+
+## 项目上下文
+- 本地路径：D:\Documents\GitHub\zenType
+- 当前 HEAD：8fa3a1f
+- 完整历史：17 个 commit，Tasks 1-10 全部完成
+- dev 工作流已搭好（pnpm run dev = watch + 热重载）
+- 关键文档：
+  - 设计：docs/superpowers/specs/2026-06-27-zentype-redesign-design.md
+  - 计划：docs/superpowers/plans/2026-06-27-zentype-redesign-plan.md
+  - 审查报告：.superpowers/review/zenType-v2-review.md
+  - 接手指南：docs/CONTINUATION.md
+
+## 你的任务
+修复 Issue #<编号>：<标题>
+
+详细描述：
+<粘贴 issue 内容>
+
+## 关键信息
+- Issue #1 (光标偏移)：src/utils/getCursorRect.ts:19-30
+- Issue #2 (点击不变亮)：src/modules/ripple.ts:94-104
+- Issue #3 (缺开关)：src/modules/typewriter.ts:102-141
+- Issue #5 (光标慢)：src/styles/index.scss:14-15
+
+## 环境配置（必做）
+$env:Path = "D:\scoop\apps\NodeJS-LTS\current;" + $env:Path
+$env:HTTP_PROXY = "http://127.0.0.1:7897"
+$env:HTTPS_PROXY = "http://127.0.0.1:7897"
+
+## 验证命令
+node node_modules/typescript/bin/tsc --noEmit    # 类型检查
+node build.js --dev                              # 构建 dev/
+
+## 工作流程建议
+1. 先 Read 相关文件，理解现状
+2. 用 brainstorming skill（如果改动较大）或直接动手（如果是简单 CSS 调整）
+3. 改完后用 subagent-driven-development 调度 deep-worker 实施 + reviewer 审查
+4. 用户是编程小白，每个步骤都要解释清楚
+
+回我"开始"就开始。
+```
+
+### 提示词 B：批量修复（高级）
+
+```
+你是一个接手的 AI 助手，要批量处理 zenType 项目的多个问题。
+
+任务清单（按优先级）：
+1. Issue #5 光标速度慢（src/styles/index.scss，简单）
+2. I-5 删除 build.js 遗留 marker 检查（build.js:39-42，简单）
+3. Issue #2 点击不变亮（src/modules/ripple.ts:94-104，中等）
+4. Issue #3 高亮条独立开关（src/modules/typewriter.ts:102-141，中等）
+5. Issue #1 光标偏移（src/utils/getCursorRect.ts:19-30，中等，需实机测试）
+
+每个任务请用 subagent-driven-development：
+- 用 deep-worker 实施
+- 用 reviewer 审查
+- 用户是编程小白，每个步骤都要用大白话解释
+
+环境配置：
+$env:Path = "D:\scoop\apps\NodeJS-LTS\current;" + $env:Path
+$env:HTTP_PROXY = "http://127.0.0.1:7897"
+$env:HTTPS_PROXY = "http://127.0.0.1:7897"
+
+回我"开始"就开始。
+```
+
+### 提示词 C：添加新功能
+
+```
+你是一个接手的 AI 助手，要给 zenType 插件添加新功能。
+
+## 必读
+- 接手指南：docs/CONTINUATION.md（项目状态、环境配置、文件结构）
+- 设计文档：docs/superpowers/specs/2026-06-27-zentype-redesign-design.md
+- 实施计划：docs/superpowers/plans/2026-06-27-zentype-redesign-plan.md
+
+## 工作流程（必须遵循）
+1. **brainstorming skill**：明确用户需求、设计方案、边界场景
+2. **writing-plans skill**：把方案变成可执行的实施计划
+3. **subagent-driven-development skill**：用 deep-worker 实施 + reviewer 审查
+
+## 用户身份
+编程小白。所有解释必须用大白话，避免编程术语堆砌。
+
+## 用户要的新功能
+<在这里描述>
+
+回我"开始 brainstorm"就启动 brainstorming skill。
+```
+
+---
+
+## 🔗 关键链接
+
+- **Release v2.0.0**：https://github.com/Han-Orz/siyuan-zen/releases/tag/v2.0.0
+- **Issues 列表**：https://github.com/Han-Orz/siyuan-zen/issues
+- **Issue #4（已关闭）**：https://github.com/Han-Orz/siyuan-zen/issues/4
+- **bazaar 仓库**：https://github.com/siyuan-note/bazaar
+- **siyuan-plugin-cli**：https://github.com/frostime/siyuan-plugin-cli
+- **Neo-Plus（参考）**：https://github.com/QYLexpired/Neo-Plus
+
+---
+
+## 📝 决策历史（避免重蹈覆辙）
+
+1. **v2.0.0 name 必须等于 repo name** —— 88250 强制要求，已用 siyuan-zen
+2. **不要用 `pnpm build`，用 `node build.js`** —— pnpm 11 的 ERR_PNPM_IGNORED_BUILDS 问题
+3. **构建产物必须叫 `package.zip`** —— 集市索引认这个名字
+4. **README 文件名是 README.md / README_zh_CN.md** —— 不是中文文件名
+5. **`.superpowers/` 是 gitignored** —— 审查报告等会话产物不会污染 repo
+6. **大文件 `参考/顺滑光标.js` 不参与构建** —— 仅作参考
+7. **不要随便改仓库名** —— 现有 4⭐1 fork，重命名代价大
+
+---
+
+**最后更新**：2026-06-29（v2.0.0 改名完成 + 审查完成后）
