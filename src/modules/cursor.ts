@@ -141,7 +141,12 @@ function doUpdateCursor(): void {
   // 3) 边界检测（3 重，round 3 移除第 3 重弹窗硬性排除）
   const allowed = isInAllowElements({ x: rect.x, y: rect.y });
   if (!allowed.allowed) {
-    // commit D：光标不消失 —— 出编辑器区域时停在 Phase 1（静态），保留在最后位置
+    // commit D + m0115 fix：区分两种边界失败
+    //   isOuterElement = false → 光标在编辑器 DOM 内但已滚出视口 → 隐藏
+    //   isOuterElement = true  → 光标确实离开了编辑器（侧栏/AV/失焦）→ 保留在最后位置，静态
+    if (!allowed.isOuterElement && cursorEl) {
+      cursorEl.classList.add("hidden");
+    }
     pauseBreathe();
     // 即使隐藏也要恢复呼吸（避免下次显示时呼吸态错乱）
     scheduleResumeBreathe();
