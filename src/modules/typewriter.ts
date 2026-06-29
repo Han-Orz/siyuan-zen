@@ -1,13 +1,12 @@
+import { getActiveEditor } from "siyuan";
 import { getCursorRect } from "../utils/getCursorRect";
+import type { CursorRect } from "../types";
+import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
-import { addStyle, removeStyle } from "../utils/styleManager";
-import typewriterCss from "../styles/index.scss";
+import { getEffectiveZIndex } from "../utils/getEffectiveZIndex";
 
-const STYLE_ID = "typewriter";
 const HIGHLIGHT_ID = "zentype-highlight-line";
-const TARGET_RATIO = 0.38; // 38% 高度
-const THRESHOLD = 40; // 触发阈值（px）
-const DURATION = 400; // 滚动时长（ms）
+const { TARGET_RATIO, THRESHOLD, DURATION } = TYPEWRITER_CONFIG;
 
 let highlightEl: HTMLDivElement | null = null;
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
@@ -18,7 +17,13 @@ function easeInOutCubic(t: number): number {
 }
 
 function getEditorContainer(): HTMLElement | null {
-  return document.querySelector(".protyle:not(.fn__none) .protyle-content");
+  // P2: 改用官方 getActiveEditor() 替代 .protyle:not(.fn__none) DOM 遍历
+  // 分屏时正确找到活跃编辑器的 .protyle-content
+  const activeEditor = getActiveEditor();
+  if (!activeEditor) return null;
+  return activeEditor.protyle.element.querySelector(
+    ".protyle-content",
+  ) as HTMLElement | null;
 }
 
 function createHighlightElement(): HTMLDivElement {
@@ -30,22 +35,15 @@ function createHighlightElement(): HTMLDivElement {
   return el;
 }
 
-function getEditorZIndex(): number {
-  const container = getEditorContainer();
-  if (!container) return 0;
-  const computed = window.getComputedStyle(container).zIndex;
-  const parsed = Number.parseInt(computed, 10);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function updateHighlight(rect: DOMRect): void {
+function updateHighlight(rect: CursorRect): void {
   if (!highlightEl) return;
-  // 思源全屏模式会给容器一个高 z-index；高亮条需要始终高于当前可滚动编辑器容器
-  const editorZ = getEditorZIndex();
+  // 思源全屏模式会给容器一个高 z-index；用 getEffectiveZIndex 沿祖先链取最大层叠上下文 z-index
+  const container = getEditorContainer();
+  const editorZ = container ? getEffectiveZIndex(container) : 0;
   highlightEl.style.zIndex = String(Math.max(editorZ + 1, 1000));
-  highlightEl.style.transform = `translate3d(0, ${rect.top - 4}px, 0)`;
+  highlightEl.style.transform = `translate3d(0, ${rect.y - 4}px, 0)`;
   highlightEl.style.height = `${rect.height + 8}px`;
-  highlightEl.style.left = `${rect.left}px`;
+  highlightEl.style.left = `${rect.x}px`;
   highlightEl.style.width = `${rect.width || 100}px`;
   highlightEl.classList.add("visible");
 }
@@ -92,7 +90,7 @@ function checkAndScroll(): void {
   // 计算距离并决定是否滚动
   const containerRect = container.getBoundingClientRect();
   const targetY = containerRect.top + containerRect.height * TARGET_RATIO;
-  const offset = rect.top - targetY;
+  const offset = rect.y - targetY;
 
   if (Math.abs(offset) >= THRESHOLD) {
     smoothScroll(container, offset);
@@ -100,9 +98,8 @@ function checkAndScroll(): void {
 }
 
 export function initTypewriter(): void {
-  // 创建 DOM + 注入 CSS（避免依赖 cursor 模块的样式注入）
+  // 创建 DOM（CSS 由 index.ts 在插件加载时统一注入）
   highlightEl = createHighlightElement();
-  addStyle(STYLE_ID, typewriterCss);
 
   // 事件数组使用三元组以便保留 options
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
@@ -136,6 +133,4 @@ export function destroyTypewriter(): void {
     highlightEl.remove();
     highlightEl = null;
   }
-
-  removeStyle(STYLE_ID);
 }

@@ -1,6 +1,7 @@
-import { getCursorElement } from "../utils/getCursorRect";
+import { getCursorElement } from "../utils/getCursorElement";
 import { shouldPauseFocusAndTypewriter, isReadMode } from "../utils/edgeCases";
 import type { RippleMode } from "../types";
+import { RIPPLE_CONFIG } from "../config";
 
 /**
  * 涟漪聚焦模块 - 文本/鼠标双模式状态机
@@ -16,9 +17,7 @@ import type { RippleMode } from "../types";
  *  - 所有事件监听器存入三元组数组，destroy 时统一清理（继承自 Task 3 经验）。
  */
 
-const OPACITY_LEVELS = [1.0, 0.85, 0.6, 0.35, 0.15, 0.05];
-const MOUSE_THROTTLE = 100; // ms
-const IDLE_THRESHOLD = 2000; // ms
+const { OPACITY_LEVELS, MOUSE_THROTTLE, IDLE_THRESHOLD } = RIPPLE_CONFIG;
 const SCROLLBAR_MARGIN = 20; // px
 
 let mode: RippleMode = "text";

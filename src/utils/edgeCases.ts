@@ -1,4 +1,5 @@
-import { getCursorElement } from "./getCursorRect";
+import { getActiveEditor } from "siyuan";
+import { getCursorElement } from "./getCursorElement";
 
 /**
  * 边界场景判定工具集。
@@ -11,11 +12,15 @@ export function hasSelection(): boolean {
   return (sel?.toString().length ?? 0) > 0;
 }
 
-/** 思源编辑器处于只读状态 */
+/** 思源编辑器处于只读状态（P2 修复：用 getActiveEditor 定位到当前活跃编辑器） */
 export function isReadMode(): boolean {
-  // 思源 `.protyle-content` 始终是 HTMLElement；querySelector 可能返回 null。
-  const editor = document.querySelector(".protyle-content") as HTMLElement | null;
-  return !editor || !editor.isContentEditable;
+  const activeEditor = getActiveEditor();
+  if (!activeEditor) return true; // 无活跃编辑器 → 视为只读
+  // protyle.element 是编辑器根元素；查询其中的 .protyle-content 判定只读
+  const contentEl = activeEditor.protyle.element.querySelector(
+    ".protyle-content",
+  ) as HTMLElement | null;
+  return !contentEl || !contentEl.isContentEditable;
 }
 
 /** 悬浮窗（block__popover）处于打开状态 */

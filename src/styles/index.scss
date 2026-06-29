@@ -5,27 +5,35 @@
 #zentype-cursor {
   position: fixed;
   pointer-events: none;
-  z-index: 9999;
+  z-index: 9999; // fallback；cursor.ts 会按 window.siyuan.zIndex 动态覆盖
   width: 3px;
   background: var(--zt-cursor-color, #5d8cd7);
   transform: translate3d(0, 0, 0);
-  will-change: transform;
+  will-change: transform, height;
   backface-visibility: hidden;
-  transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1),
-              height 0.15s ease;
+  transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
   opacity: 1;
+  // 默认开启呼吸动画；breathing.ts 通过 .no-animation 暂停
+  animation: zentype-breathe 3s 1.5s ease-in-out infinite;
 }
 
+// 状态类
 #zentype-cursor.hidden {
   opacity: 0 !important;
+  animation: none !important;
   transition: none !important;
 }
 
-#zentype-cursor.breathing {
-  animation: zentype-blink 3s 1.5s ease-in-out infinite;
+#zentype-cursor.no-animation {
+  animation: none !important;
 }
 
-@keyframes zentype-blink {
+#zentype-cursor.no-transition {
+  transition: none !important;
+}
+
+// 呼吸动画关键帧：参考版风格（0.3 尾帧产生 blink 节奏感）
+@keyframes zentype-breathe {
   0%   { opacity: 1; }
   60%  { opacity: 0.9; }
   90%  { opacity: 0; }
@@ -37,9 +45,12 @@
   --zt-cursor-color: #8ab4f8;
 }
 
-// 隐藏原生光标（仅在编辑器内）
-.protyle-wysiwyg { caret-color: transparent; }
+// 隐藏原生光标（仅在编辑器内，排除 AV 数据库）
+.protyle-wysiwyg [data-node-id]:not(.av):not(.av__cursor) { caret-color: transparent; }
 .protyle-title__input { caret-color: transparent; }
+
+// 侧边栏拖动手柄禁止选择（防止拖动时被误插入 marker）
+.layout__resize { user-select: none; }
 
 // ===== 打字机高亮条 =====
 
