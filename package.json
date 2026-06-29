@@ -5,8 +5,10 @@
   "main": "index.js",
   "scripts": {
     "build": "node build.js",
-    "dev": "node build.js --watch",
-    "clean": "rimraf dist *.zip"
+    "build:dev": "node build.js --dev",
+    "dev": "node build.js --dev --watch",
+    "link": "node scripts/make_dev_link.js",
+    "clean": "rimraf dist dev *.zip"
   },
   "devDependencies": {
     "@types/archiver": "^6.0.0",
@@ -17,6 +19,7 @@
     "rimraf": "^5.0.0",
     "sass": "^1.77.0",
     "siyuan": "^1.0.4",
+    "siyuan-plugin-cli": "^2.5.0",
     "typescript": "^5.4.0"
   }
 }
