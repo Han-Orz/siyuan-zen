@@ -44,6 +44,7 @@ const CURSOR_ID = "zentype-cursor";
 let cursorEl: HTMLDivElement | null = null;
 let pendingFrame: number | null = null;
 let isFirstMove = true; // round 3：首次移动跳过 transition（避免从默认位置"飞来"）
+let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 .no-transition，保留 0.15s 跳移动画
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 
 // round 3 P1: ResizeObserver / Popover 拖动 / 滚动容器事件
@@ -167,6 +168,10 @@ function doUpdateCursor(): void {
   bindResizeObservers(allowed.cursorElement);
   bindPopoverDrag(allowed.cursorElement);
   bindScrollContainerEvents(allowed.cursorElement);
+
+  // round 4 fix：清键盘标志。下一次 scroll/ResizeObserver 触发时若 flag=false，
+  // 说明当前更新已完成、后续 scroll 不再与键盘同帧，正常加 .no-transition
+  pendingKeyboardUpdate = false;
 }
 
 function scheduleResumeBreathe(): void {
@@ -178,8 +183,12 @@ function scheduleResumeBreathe(): void {
 function onScrollOrWheel(): void {
   if (!cursorEl) return;
   pauseBreathe();
-  cursorEl.classList.add("no-transition");
-  cursorEl.classList.add("no-animation");
+  // round 4 fix：Enter 触发的 SiYuan 自动滚动会同步到这里；
+  // 此时 pendingKeyboardUpdate=true，跳过加 .no-transition 保留 0.15s 跳移动画
+  if (!pendingKeyboardUpdate) {
+    cursorEl.classList.add("no-transition");
+    cursorEl.classList.add("no-animation");
+  }
   queueUpdate();
 }
 
@@ -200,7 +209,8 @@ function bindResizeObservers(cursorElement: Element | null): void {
     protyleContentObserver?.disconnect();
     protyleContentObserver = new ResizeObserver(() => {
       if (!cursorEl) return;
-      cursorEl.classList.add("no-transition");
+      // round 4 fix：键盘触发的 ResizeObserver（Enter 新建段落等）不强制无过渡
+      if (!pendingKeyboardUpdate) cursorEl.classList.add("no-transition");
       queueUpdate();
     });
     protyleContentObserver.observe(protyleContent);
@@ -215,7 +225,8 @@ function bindResizeObservers(cursorElement: Element | null): void {
     protyleWysiwygObserver?.disconnect();
     protyleWysiwygObserver = new ResizeObserver(() => {
       if (!cursorEl) return;
-      cursorEl.classList.add("no-transition");
+      // round 4 fix：键盘触发的 ResizeObserver（Enter 新建段落等）不强制无过渡
+      if (!pendingKeyboardUpdate) cursorEl.classList.add("no-transition");
       queueUpdate();
     });
     protyleWysiwygObserver.observe(protyleWysiwyg);
@@ -279,8 +290,11 @@ function bindScrollContainerEvents(cursorElement: Element | null): void {
     const handler: EventListener = () => {
       if (!cursorEl) return;
       pauseBreathe();
-      cursorEl.classList.add("no-transition");
-      cursorEl.classList.add("no-animation");
+      // round 4 fix：键盘触发的嵌套滚动容器滚动（如 Enter 自动滚屏）保留过渡动画
+      if (!pendingKeyboardUpdate) {
+        cursorEl.classList.add("no-transition");
+        cursorEl.classList.add("no-animation");
+      }
       queueUpdate();
     };
 
@@ -302,8 +316,10 @@ export function initCursor(): void {
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", queueUpdate],
     // keydown + input 用 rAF 包裹（参考版做法），替代三阶段 throttle
-    ["keydown", () => requestAnimationFrame(queueUpdate)],
-    ["input", () => requestAnimationFrame(queueUpdate)],
+    // round 4 fix：先 set flag，下一次 doUpdateCursor 末尾 reset；
+    // 让 Enter 触发的 scroll/ResizeObserver 知道本次更新是键盘驱动，不加 .no-transition
+    ["keydown", () => { pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate); }],
+    ["input", () => { pendingKeyboardUpdate = true; requestAnimationFrame(queueUpdate); }],
     ["mouseup", queueUpdate],
     ["click", queueUpdate],
     [
