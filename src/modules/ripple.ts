@@ -30,7 +30,9 @@ let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [
 let lastMouseMove = 0;
 
 function getCurrentBlock(): Element | null {
-  if (mode === "mouse" && lastMouseBlock) return lastMouseBlock;
+  // 鼠标聚焦模式已停用（用户暂未决定此功能该出现在什么场景）。
+  // 保留 RippleMode union 中的 "mouse" 以便未来恢复时不破坏类型契约。
+  // if (mode === "mouse" && lastMouseBlock) return lastMouseBlock;
   const cursor = getCursorElement();
   return cursor?.closest("[data-node-id]") ?? null;
 }
@@ -114,40 +116,42 @@ function onMouseMove(e: MouseEvent): void {
   if (now - lastMouseMove < MOUSE_THROTTLE) return;
   lastMouseMove = now;
 
+  // 鼠标聚焦模式已停用（用户暂未决定此功能该出现在什么场景）。
+  // 下方整段 mouse 模式逻辑被注释保留，未来如需恢复可整段还原。
   // 鼠标在编辑器外：mouse → text
-  const target = e.target as Element | null;
-  if (!target?.closest(".protyle-wysiwyg")) {
-    if (mode === "mouse") {
-      mode = "text";
-      applyRipple();
-    }
-    return;
-  }
+  // const target = e.target as Element | null;
+  // if (!target?.closest(".protyle-wysiwyg")) {
+  //   if (mode === "mouse") {
+  //     mode = "text";
+  //     applyRipple();
+  //   }
+  //   return;
+  // }
 
   // 鼠标在滚动条上：忽略
-  if (isOverScrollbar(e)) return;
+  // if (isOverScrollbar(e)) return;
 
-  const elementAtPoint = document.elementFromPoint(e.clientX, e.clientY);
-  if (!elementAtPoint) return;
+  // const elementAtPoint = document.elementFromPoint(e.clientX, e.clientY);
+  // if (!elementAtPoint) return;
 
-  const mouseBlock = elementAtPoint.closest("[data-node-id], iframe, video");
-  if (!mouseBlock) return;
-  lastMouseBlock = mouseBlock as Element;
+  // const mouseBlock = elementAtPoint.closest("[data-node-id], iframe, video");
+  // if (!mouseBlock) return;
+  // lastMouseBlock = mouseBlock as Element;
 
   // 决定是否切到 mouse 模式
-  const readMode = isReadMode();
-  const idleTooLong = now - lastTextCursorChange > IDLE_THRESHOLD;
-  const mouseInDifferentBlock =
-    lastTextBlock &&
-    !mouseBlock.contains(lastTextBlock) &&
-    !lastTextBlock.contains(mouseBlock);
+  // const readMode = isReadMode();
+  // const idleTooLong = now - lastTextCursorChange > IDLE_THRESHOLD;
+  // const mouseInDifferentBlock =
+  //   lastTextBlock &&
+  //   !mouseBlock.contains(lastTextBlock) &&
+  //   !lastTextBlock.contains(mouseBlock);
 
-  if (readMode || idleTooLong || mouseInDifferentBlock) {
-    if (mode !== "mouse") {
-      mode = "mouse";
-    }
-    applyRipple();
-  }
+  // if (readMode || idleTooLong || mouseInDifferentBlock) {
+  //   if (mode !== "mouse") {
+  //     mode = "mouse";
+  //   }
+  //   applyRipple();
+  // }
 }
 
 export function initRipple(): void {
@@ -158,10 +162,9 @@ export function initRipple(): void {
   pendingFrame = null;
   lastMouseMove = 0;
 
-  // 事件数组使用三元组以便保留 options（mousemove 用 passive 提高滚动性能）
+  // 事件数组使用三元组以便保留 options（鼠标聚焦模式已停用 → 不再注册 mousemove）
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", onSelectionChange],
-    ["mousemove", onMouseMove as EventListener, { passive: true }],
     ["click", onSelectionChange],
     ["keyup", onSelectionChange],
   ];
