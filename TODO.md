@@ -52,3 +52,58 @@
 - 涟漪聚焦的「距离计算」是用 JS 重算 vs CSS 变量驱动 vs DOM 注入 class → **JS 重算（最简单直接）**
 - 三个功能的「开关入口」放哪里 → **顶栏总开关 + 命令面板单开关**
 - 与思源主题（明亮/暗黑）的色彩适配方案 → **CSS 变量 `[data-theme-mode="dark"]`**
+
+---
+
+## 实施进度（2026-06-29）
+
+### 已实施
+
+#### Round 5：4 个原始 BUG（cursor.ts / getCursorRect.ts）
+- [x] 呼吸感（反向 idle 暂停/恢复）
+- [x] 光标高度（lineHeight × 1.1，垂直居中）
+- [x] 移动动画（no-transition / no-animation）
+- [x] 边界检测（多重重检测）
+
+#### Round 7：P0 完整重构
+- [x] 6 项架构决策（全局 cursor、lineHeight 1.1、reverse 呼吸、viewport、dynamic zIndex、rAF）
+- [x] 新建 `src/types/index.ts` (CursorRect), `getCursorElement.ts`, `getLineHeight.ts`, `cursor/breathing.ts`, `cursor/boundary.ts`
+- [x] 简化 `getCursorRect()` 为单一函数（不再返回 DOMRect）
+
+#### Round 8：兼容性 refactor
+- [x] 删除双函数策略（`getCursorRect` + `getCursorDisplayRect`）
+- [x] `getCursorRect()` 返回 `CursorRect {x, y, width, height}`（消费者更新字段名）
+
+#### Round 9：P1 + 动画优化 + 兼容性（A1-A9 / B1-B5 / C1-C5）
+- [x] A1-A9：9 项兼容性修复（siyuan.d.ts 拆分 / getCursorElement 解耦 / 删 height transition / ZWSP 全局复用 / isFirstMove / 选中文本 no-transition / isMobile / 删 throttle / 删 isInsidePopupOrDialog）
+- [x] B1-B5：动画优化（关键帧改参考版 / no-transition 策略 / 不需要 contain）
+- [x] C1-C5：P1（getEffectiveZIndex / ResizeObserver / popover drag / scrollable 容器）
+
+#### Round 10：参数可配置 + 直角矩形
+- [x] 删除 `border-radius: 2px`（改为直角矩形）
+- [x] 新建 `src/config.ts`（CURSOR_CONFIG / TYPEWRITER_CONFIG / RIPPLE_CONFIG）
+- [x] `getCursorRect.ts` / `cursor.ts` / `breathing.ts` / `typewriter.ts` / `ripple.ts` 全部接入 config
+
+#### Round 11：P2 完整实施 + Reviewer 批准
+- [x] **P2-1** EventBus 迁移（9 个事件：loaded-protyle-static/dynamic / destroy-protyle / switch-protyle / click-editorcontent / open-menu-content / ws-main / mobile-keyboard-show/hide）
+- [x] **P2-2** `getActiveEditor()` / `getFrontend()` 全面使用（cursor.ts / typewriter.ts / edgeCases.ts / isMobile.ts）
+- [x] **P2-3** WS 监听迁移到 `ws-main` EventBus（删 `wsHandler` + `addEventListener("message"...)` + `JSON.parse`）
+- [x] **P2-7** `hasScroll` / `findAllScrollableAncestors` / `findClosestScrollableElement` 去重到 `src/utils/scroll.ts`
+- [x] **P2-8** `isMobile()` 改用 `getFrontend()`（替代 `getElementById("sidebar")`）
+- [x] **P2-9** `isReadMode()` 只取第一个 `.protyle-content` 修复（改用 `getActiveEditor().protyle.element`）
+- [x] **P2-10** `firstProtyleIds` / `clickedProtyleIds` → `activeProtyleIds` Set + EventBus `click-editorcontent`
+- [x] **Reviewer** APPROVE WITH MINOR FIXES（5 项 R-P2 全部 verified accurate）
+- [x] **F1**：删除 dead state `loadedProtyleIds`（仅声明/add/delete/clear，从未被读）
+- [x] **F3**：记录 `__zentypeScrollBound` 在 `toggle()` 循环残留的 known limitation
+
+### 明确推迟（P2 中决定不做）
+- [ ] **P2-4** SCSS → JS 字符串 — `cursor-optimization-p2-plan.md §5.1` 推荐推迟（与现有 ESBuild sass plugin 架构稳定不符）
+- [ ] **P2-5** `breathing.ts` 改用 rAF — `cursor-optimization-p2-plan.md §5.2` 不推荐（`setTimeout 500ms` 是 idle 超时检测语义，rAF 16ms 无法替代）
+
+### 长期未决（不在 P2 范围）
+- [ ] #1 软链接决策（A: 管理员 PowerShell / B: 开发者模式 / C: 重写 make_dev_link.js 为 watcher+copy）
+- [ ] v2.1.0 GitHub release（合并 P2 改动作为 v2.2.0 一起发布更合理）
+- [ ] v2.2.0 GitHub release
+- [ ] 集市上架（v2.0.0 已上架，v2.2.0 待发布）
+- [ ] 用户提到的"嵌套块递归渐淡"
+- [ ] `SMOOTH_ENABLED` / `BLINK_ENABLED` / `APPLY_TO_TITLE` / `USE_IN_MOBILE` 配置开关接到 JS 逻辑

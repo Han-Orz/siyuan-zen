@@ -5,6 +5,44 @@
 
 ---
 
+## 🔄 最新工作（2026-06-29，未提交）
+
+### Round 5-11 完整光标优化 已完成
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| Round 5 | 4 个原始 cursor BUG | ✅ shipped |
+| Round 7 | P0 完整重构（6 决策 + 新建 5 文件） | ✅ shipped |
+| Round 8 | 兼容性 refactor（删除双函数） | ✅ shipped |
+| Round 9 | P1 + 动画 + A1-A9 兼容性 | ✅ shipped |
+| Round 10 | 直角矩形 + 参数可配置 + 文档更新 | ✅ shipped |
+| **Round 11** | **P2 EventBus 迁移 + 代码清理 + Reviewer 批准** | ✅ **shipped** |
+
+### 本次会话关键改动（**未提交到 git**）
+- **Round 11 P2**：新建 `src/utils/scroll.ts` 集中滚动工具；`cursor.ts` 删 `wsHandler` + 手动 WS + 白名单；`index.ts` 订阅 9 个 EventBus 事件（`eventBusOffFns` 数组统一管理）；`isMobile.ts` / `edgeCases.ts` / `typewriter.ts` 改用 `getActiveEditor()` / `getFrontend()`；`activeProtyleIds` Set + `click-editorcontent` 驱动
+- **Reviewer F1**：删除 dead state `loadedProtyleIds`（仅声明/add/delete/clear，从未被读）
+- **CHANGELOG**：v2.1.0 → v2.2.0，记录 P2 + F3 known limitation
+- **TODO**：Round 11 段 + 明确推迟项（P2-4/P2-5）
+
+### 待办（按用户要求）
+1. **#1 软链接决策**：用户说推迟，3 个选项仍未选（A: 管理员 PS / B: 开发者模式 / C: 重写脚本为 watcher+copy）
+2. **GitHub commit / release**：用户说"等一切就绪再上线"——P2 完成后 v2.2.0 可发
+3. **集市上架**：v2.2.0 release 后自动索引
+4. **用户实际测试**：v2.2.0 完整测试（见"用户测试指南"段，m0123）
+
+### 工作目录 hash 已同步
+- `D:\Documents\GitHub\zenType\dev/` → `D:\SiYuan\data\plugins\siyuan-zen/` 5/5 MATCH
+- 用户测试方式：思源 → 插件 → 焦点写作 → 禁用 → 启用（触发 onunload+onload 重载）
+
+### 设计文档已就位
+- `docs/superpowers/plans/cursor-optimization-plan.md` —— P0 方案（v2.1.0）
+- `docs/superpowers/plans/cursor-optimization-round-3.md` —— P1 + 动画 + A1-A9（v2.2.0）
+- `参考/Neo-Plus-顺滑光标分析.md` —— Neo-Plus 参考实现分析
+- `参考/siyuan-kernel-api-调研.md` —— SiYuan 内核 API 调研（EventBus / getActiveEditor 等）
+- `参考/三版顺滑光标对比.md` —— 25 维特性对比（当前 22/25，超越 Neo-Plus 13/25）
+
+---
+
 ## 📍 项目当前状态
 
 - **仓库**：`Han-Orz/siyuan-zen`（GitHub）

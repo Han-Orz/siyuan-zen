@@ -61,6 +61,28 @@
 - 涟漪聚焦在只读模式下自动切换为鼠标中心模式
 - 悬浮窗里编辑时聚焦也暂停
 
+## 自定义参数（v2.1）
+
+打开 `src/config.ts` 可以调节：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `CURSOR_CONFIG.HEIGHT_RATIO` | `1.1` | 光标高度 = 所在行行高 × 此倍数 |
+| `CURSOR_CONFIG.BLINK_DELAY_MS` | `500` | 停止活动后多少毫秒恢复呼吸闪烁 |
+
+打开 `src/styles/index.scss` 可以调节颜色 / 宽度 / 移动曲线 / 关键帧：
+
+```scss
+#zentype-cursor {
+  width: 3px;                                      // 光标宽度
+  background: var(--zt-cursor-color, #5d8cd7);     // 颜色（亮色主题）
+  transition: transform 0.15s cubic-bezier(...);   // 移动曲线
+  animation: zentype-breathe 3s 1.5s ...;          // 闪烁动画
+}
+```
+
+保存后 `pnpm run dev` 会自动重新编译（思源 1-2 秒内热重载）。
+
 ## 路线图
 
 完整设计见 [docs/superpowers/specs/2026-06-27-zentype-redesign-design.md](docs/superpowers/specs/2026-06-27-zentype-redesign-design.md)。

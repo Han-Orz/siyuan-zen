@@ -94,6 +94,34 @@ pnpm run build:dev
 
 ---
 
+## 自定义参数（v2.1+）
+
+想调节光标高度、闪烁延迟等参数？改 `src/config.ts`：
+
+```typescript
+export const CURSOR_CONFIG = {
+  HEIGHT_RATIO: 1.1,        // 光标高度 = 行高 × 1.1
+  BLINK_DELAY_MS: 500,      // 停止活动后多少毫秒恢复呼吸
+};
+```
+
+想调节颜色、宽度、移动曲线、关键帧？改 `src/styles/index.scss`：
+
+```scss
+#zentype-cursor {
+  width: 3px;
+  background: var(--zt-cursor-color, #5d8cd7);
+  transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+  animation: zentype-breathe 3s 1.5s ease-in-out infinite;
+}
+```
+
+保存即生效（`pnpm run dev` 自动重新编译 + 热重载）。
+
+> ⚠️ 配置文件中的 `SMOOTH_ENABLED` / `BLINK_ENABLED` / `APPLY_TO_TITLE` / `USE_IN_MOBILE` 开关暂时是占位（SCSS 编译期锁死），需要同步删改 SCSS 才有效。等 P2 实施后才会真正生效。
+
+---
+
 ## 打包发布
 
 发布新版本到思源集市 / GitHub release：

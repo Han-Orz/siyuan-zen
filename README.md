@@ -52,6 +52,28 @@ When you drag-select text, ripple focus and typewriter mode gracefully fade out 
 
 Read-only mode and block popups automatically suspend typewriter mode. Ripple focus switches to mouse-centered mode in read-only.
 
+## Customization (v2.1)
+
+Open `src/config.ts` to tweak:
+
+| Parameter | Default | What it does |
+|-----------|---------|--------------|
+| `CURSOR_CONFIG.HEIGHT_RATIO` | `1.1` | Cursor height = line-height × this multiplier |
+| `CURSOR_CONFIG.BLINK_DELAY_MS` | `500` | Idle delay before blink resumes |
+
+Open `src/styles/index.scss` to tweak visual style:
+
+```scss
+#zentype-cursor {
+  width: 3px;                                      // Cursor width
+  background: var(--zt-cursor-color, #5d8cd7);     // Color (light theme)
+  transition: transform 0.15s cubic-bezier(...);   // Movement curve
+  animation: zentype-breathe 3s 1.5s ...;          // Blink animation
+}
+```
+
+`pnpm run dev` rebuilds on save; SiYuan hot-reloads in 1-2 seconds.
+
 ## Roadmap
 
 See [docs/superpowers/specs/2026-06-27-zentype-redesign-design.md](docs/superpowers/specs/2026-06-27-zentype-redesign-design.md) for the full design.
