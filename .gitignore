@@ -20,3 +20,7 @@ index.css.map
 
 # Release zip (build artifact)
 zentype.zip
+package.zip
+
+# Research / reference materials (local only, not shipped)
+参考/

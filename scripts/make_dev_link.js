@@ -6,7 +6,8 @@
 // Workspace resolution order:
 //   1. SIYUAN_WORKSPACE environment variable
 //   2. --workspace <path> CLI argument
-//   3. %USERPROFILE%\Documents\SiYuan\   (default)
+//   3. %USERPROFILE%\Documents\SiYuan\   (default; verifyWorkspace() will reject it
+//      if it does not actually look like a SiYuan workspace)
 //
 // On Windows the script tries a real symlink first (type='dir'); if that fails
 // with a permission error it falls back to a directory junction (type='junction'),
@@ -18,6 +19,9 @@ const path = require('path');
 
 const PLUGIN_NAME = 'siyuan-zen';
 const DEFAULT_WORKSPACE = path.join(os.homedir(), 'Documents', 'SiYuan');
+// Markers that distinguish a real SiYuan workspace from a random directory
+// of the same name. The workspace must contain at least one of these.
+const WORKSPACE_MARKERS = ['conf', 'temp', '.lock', 'siyuan.log', 'appearance'];
 
 const log = (msg) => console.log(`\x1B[36m[make_dev_link]\x1B[0m ${msg}`);
 const warn = (msg) => console.log(`\x1B[33m[make_dev_link]\x1B[0m ${msg}`);
@@ -153,6 +157,32 @@ function verifyLink(dstDir) {
   }
 }
 
+function verifyWorkspace(workspace) {
+  if (!fs.existsSync(workspace)) {
+    error(
+      `Path does not exist: ${workspace}\n` +
+      `Set SIYUAN_WORKSPACE or pass --workspace <path> to point at your SiYuan workspace.\n` +
+      `Tip: SiYuan stores its workspace under the directory you chose on first launch.`
+    );
+    return false;
+  }
+  const stat = fs.statSync(workspace);
+  if (!stat.isDirectory()) {
+    error(`${workspace} exists but is not a directory.`);
+    return false;
+  }
+  const found = WORKSPACE_MARKERS.filter((m) => fs.existsSync(path.join(workspace, m)));
+  if (found.length === 0) {
+    error(
+      `${workspace} does not look like a SiYuan workspace.\n` +
+      `Expected to find at least one of: ${WORKSPACE_MARKERS.join(', ')}\n` +
+      `Set SIYUAN_WORKSPACE or pass --workspace <path> to the real workspace directory.`
+    );
+    return false;
+  }
+  return true;
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
@@ -161,12 +191,7 @@ function main() {
   }
 
   const workspace = resolveWorkspace(args);
-  if (!fs.existsSync(workspace)) {
-    error(
-      `SiYuan workspace not found at: ${workspace}\n` +
-      `Set SIYUAN_WORKSPACE, pass --workspace <path>, or check that SiYuan has been launched at least once\n` +
-      `so it creates its workspace directory.`
-    );
+  if (!verifyWorkspace(workspace)) {
     process.exit(1);
   }
 

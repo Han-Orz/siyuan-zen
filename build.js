@@ -23,7 +23,11 @@ const buildOptions = {
   loader: { '.ts': 'ts' },
   plugins: [
     sassPlugin({
-      type: 'css',
+      // 'css-text' makes SCSS imports return the compiled CSS as a string,
+      // so modules can call addStyle(id, css) and inject it as a <style> tag.
+      // (Previously 'css' emitted a separate dev/index.css file, which left
+      //  `import css from '*.scss'` as an empty object at runtime.)
+      type: 'css-text',
       loadPaths: ['src/styles'],
     }),
   ],
@@ -35,9 +39,12 @@ function copyAssets() {
   fs.copyFileSync('plugin.json', path.join(OUT_DIR, 'plugin.json'));
   fs.copyFileSync('icon.png', path.join(OUT_DIR, 'icon.png'));
   fs.copyFileSync('preview.png', path.join(OUT_DIR, 'preview.png'));
+  // Sanity check: with `type: 'css-text'` the compiled CSS must end up inside
+  // index.js. Look for a known selector from src/styles/index.scss.
   const outJs = fs.readFileSync(OUT_FILE, 'utf-8');
-  if (!outJs.includes('INSERT_CSS_HERE')) {
-    console.warn('Warning: index.js does not contain INSERT_CSS_HERE marker');
+  if (!outJs.includes('#zentype-cursor') || !outJs.includes('#zentype-highlight-line')) {
+    console.warn('Warning: index.js does not contain expected CSS rules. ' +
+      'Check that sassPlugin type is "css-text" and the SCSS compiles.');
   }
 }
 

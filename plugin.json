@@ -8,7 +8,7 @@
   "frontends": ["all"],
   "displayName": {
     "default": "zenType",
-    "zh_CN": "禅打"
+    "zh_CN": "焦点写作"
   },
   "description": {
     "default": "Smooth cursor + typewriter mode + ripple focus for distraction-free writing",
