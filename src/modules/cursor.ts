@@ -47,6 +47,7 @@ let pendingFrame: number | null = null;
 let isFirstMove = true; // round 3：首次移动跳过 transition（避免从默认位置"飞来"）
 let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 .no-transition，保留 0.15s 跳移动画
 let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round 4 fix（capture + cooldown）：键盘事件后 150ms 内 scroll/ResizeObserver 知道本次更新是键盘驱动
+let resumeBreatheTimer: ReturnType<typeof setTimeout> | null = null; // commit A fix：复用 setTimeout，避免堆叠；destroy 时清理
 
 function markKeyboardPending(): void {
   pendingKeyboardUpdate = true;
@@ -197,8 +198,11 @@ function doUpdateCursor(): void {
 }
 
 function scheduleResumeBreathe(): void {
-  // 复用 setTimeout，避免堆叠
-  setTimeout(() => resumeBreathe(), CURSOR_CONFIG.BLINK_DELAY_MS);
+  if (resumeBreatheTimer !== null) clearTimeout(resumeBreatheTimer);
+  resumeBreatheTimer = setTimeout(() => {
+    resumeBreatheTimer = null;
+    resumeBreathe();
+  }, CURSOR_CONFIG.BLINK_DELAY_MS);
 }
 
 /** 滚动 / 滚轮处理：暂停呼吸 + 停止过渡 + 立即更新 */
@@ -439,8 +443,8 @@ export function destroyCursor(): void {
   pendingKeyboardUpdate = false;
 
   // 清理 DOM 事件
-  eventListeners.forEach(([event, handler]) => {
-    document.removeEventListener(event, handler);
+  eventListeners.forEach(([event, handler, options]) => {
+    document.removeEventListener(event, handler, options);
   });
   eventListeners = [];
 
@@ -492,6 +496,14 @@ export function destroyCursor(): void {
     delete (el as any).__zentypeScrollBound;
   });
   scrollEventBindings.length = 0;
+
+  // commit A fix：重置聚焦/打字机模式辅助状态 + 清理呼吸恢复定时器
+  isPasting = false;
+  mouseDownInfo = null;
+  if (resumeBreatheTimer !== null) {
+    clearTimeout(resumeBreatheTimer);
+    resumeBreatheTimer = null;
+  }
 }
 
 // ============== P2: EventBus 回调（由 index.ts 订阅并调用） ==============
