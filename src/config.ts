@@ -72,6 +72,8 @@ export const SQUISH_BOUNCE = {
 
 /** 边缘交互：视口边缘方向箭头指示器。 */
 export const EDGE_ARROW = {
+  /** 总开关：关闭后箭头永不显示。TODO-2：用户测试后默认关闭。 */
+  ENABLED: false,
   /** 箭头显示时的透明度（0–1）。 */
   OPACITY: 0.6,
   /** 三角形大小（px），即箭头指针高度。 */

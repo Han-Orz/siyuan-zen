@@ -314,14 +314,17 @@ function doUpdateCursor(): void {
   // commit 3：视口边缘箭头指示器
   //   仅在编辑器主区（allowed && !isOuterElement）生效；case A 已在前面早退
   //   离屏时按 nearest edge 上下方向显示；其他情况（左右边缘、视口内）隐藏
-  if (allowed.isOuterElement === true) {
-    hideArrow();
-  } else if (allowed.isOuterElement === false && edge.edge === "top" && edge.isOffScreen) {
-    showArrow("up");
-  } else if (allowed.isOuterElement === false && edge.edge === "bottom" && edge.isOffScreen) {
-    showArrow("down");
-  } else if (allowed.allowed === true) {
-    hideArrow();
+  //   TODO-2：用户测试后默认关闭，ENABLED=false 时整块跳过（hideArrow 也不调）
+  if (EDGE_ARROW.ENABLED) {
+    if (allowed.isOuterElement === true) {
+      hideArrow();
+    } else if (allowed.isOuterElement === false && edge.edge === "top" && edge.isOffScreen) {
+      showArrow("up");
+    } else if (allowed.isOuterElement === false && edge.edge === "bottom" && edge.isOffScreen) {
+      showArrow("down");
+    } else if (allowed.allowed === true) {
+      hideArrow();
+    }
   }
 
   // 4) zIndex：取编辑器祖先链上最近的层叠上下文 + 1，再与思源全局 zIndex + 1 取大值
