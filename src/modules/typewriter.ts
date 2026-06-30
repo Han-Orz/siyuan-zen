@@ -1,5 +1,6 @@
 import { getActiveEditor } from "siyuan";
 import { getCursorRect } from "../utils/getCursorRect";
+import { findClosestScrollableElement } from "../utils/scroll";
 import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
 import * as inputMode from "./inputMode";
@@ -15,12 +16,14 @@ function easeInOutCubic(t: number): number {
 
 function getEditorContainer(): HTMLElement | null {
   // P2: 改用官方 getActiveEditor() 替代 .protyle:not(.fn__none) DOM 遍历
-  // 分屏时正确找到活跃编辑器的 .protyle-content
+  // 分屏时正确找到活跃编辑器的可滚动祖先
   const activeEditor = getActiveEditor();
   if (!activeEditor) return null;
-  return activeEditor.protyle.element.querySelector(
+  const contentEl = activeEditor.protyle.element.querySelector(
     ".protyle-content",
   ) as HTMLElement | null;
+  if (!contentEl) return null;
+  return findClosestScrollableElement(contentEl);
 }
 
 function smoothScroll(target: HTMLElement, deltaY: number): void {
@@ -34,7 +37,11 @@ function smoothScroll(target: HTMLElement, deltaY: number): void {
     const elapsed = performance.now() - startTime;
     const t = Math.min(elapsed / DURATION, 1);
     const eased = easeInOutCubic(t);
-    target.scrollTop = startScroll + (endScroll - startScroll) * eased;
+    const maxScroll = target.scrollHeight - target.clientHeight;
+    target.scrollTop = Math.max(0, Math.min(
+        startScroll + (endScroll - startScroll) * eased,
+        maxScroll
+    ));
     if (t < 1) {
       pendingScroll = requestAnimationFrame(step);
     } else {
