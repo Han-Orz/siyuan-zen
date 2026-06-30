@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.2.1 (2026-06-30) — Cursor Edge-Fade Fixes
+
+Branch: `fix/v2.2.0-cursor-optimization`（8 commits ahead of v2.2.0，尚未发 release）
+
+### Fixed
+- **TODO-1**: 插件加载时 cursor 从 (0,0) "whoosh" 到实际位置 → `createCursorElement` 在元素进 DOM 那一刻即加 `.no-transition`，首次 doUpdateCursor 写完真实位置后下一帧移除（`ba0bcea`）
+- **TODO-2**: 边缘箭头指示器默认关闭 → `EDGE_ARROW.ENABLED: false` + 包裹箭头 if/else 块（`84193de`）
+- **TODO-3**: 边缘定义太宽（60px 触发太早）→ `EDGE_FADE.ZONE: 60 → 30`，后续用户手动收到 20（`924c337`）
+- **TODO-4**: 滚出顶部和底部动画不对称 → 把 squish/bounce 触发块提到边界早退前 + `!isOuterElement` 守门（`c168586`）
+
+### Changed
+- **顶部/底部边缘对齐到 editor rect**（`1ea9891`）—— 之前 `getEdgeProximity` 用 viewport 边、`isInAllowElements` 用 protyle-content rect（约 y=55），两套坐标系错位导致顶部永远进不了淡出区看着瞬切。现在 `getEdgeProximity(rect, editorRect?)` 接受可选 editor rect，顶部/底部对称淡出。
+- **返回方向 instant jump 修复**（同 commit `1ea9891`）—— 新增 `wasOffScreen` 状态，case C 首帧 force-remove `.no-transition` + reflow，让回屏第一帧 opacity 也走 transition。
+- **squish/bounce 动画下线**（`0ee73ed`）—— 用户测试反馈 scale 动画"显得像弹弓"，删除所有 scale 关键帧 + 触发函数 + `wasOffScreen`/`squishAnimTimer` state。
+- **Q7 距离→时长**（`0ee73ed`）—— 从内联 `dist/1500` 公式搬到 `config.TRANSITION.TIERS` 分档表（用户已手动调到 `0.07/0.15/0.21/0.30`）。
+- **(0,0) 跳修复**（`282a964`）—— SCSS keyframes 改用独立 `scale:` 属性（CSS Transform Module Level 2），不再覆盖 inline `transform: translate3d(x, y, 0)`。
+
+### Dev workflow
+- 改用 `scripts/make_dev_link.js` 建 junction，`D:\SiYuan\data\plugins\siyuan-zen` → `dev/`，配合 `pnpm run dev` watch 实现"保存即热重载"。不再使用 `npx make-install` 硬同步（siyuan-plugin-cli 已从 devDependencies 移除）。
+
+### Cleanup
+- 删除 dead state `wasOffScreen` / `squishAnimTimer`（squish/bounce 下线后） + 删除 destroy 里的死引用 `.squishing/.bouncing` class
+- 更新 `docs/TODO.md` / `CURSOR_ANIMATION_DECISIONS.md` / `TESTING_GUIDE_v2.2.0.md` 反映当前状态
+
+---
+
 ## v2.2.0 (2026-06-29) — EventBus Migration + Code Cleanup
 
 ### Added

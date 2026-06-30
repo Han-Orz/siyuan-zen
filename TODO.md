@@ -55,6 +55,21 @@
 
 ---
 
+### Plan 6 边缘交互（2026-06-30，分支 `fix/v2.2.0-cursor-optimization`，8 commits，未发 release）
+- [x] **TODO-1**: 初始 cursor "whoosh" 修复（`ba0bcea`）
+- [x] **TODO-2**: 边缘箭头指示器默认关闭（`84193de`）
+- [x] **TODO-3**: `EDGE_FADE.ZONE: 60 → 30`，用户手动收到 20（`924c337`）
+- [x] **TODO-4**: 滚出顶部和底部动画对称（`c168586`）
+- [x] **(0,0) 跳修复** —— keyframes 用独立 `scale:` 属性（`282a964`）
+- [x] **squish/bounce 下线** —— 用户反馈"像弹弓"，删除（`0ee73ed`）
+- [x] **Q7 距离→时长** —— `TRANSITION.TIERS` 分档表（`0ee73ed`）
+- [x] **顶部/底部对齐 editor rect** —— `getEdgeProximity` 加可选 `editorRect` 参数（`1ea9891`）
+- [x] **返回方向 instant jump** —— `wasOffScreen` 状态 + case C 首帧 force-remove `.no-transition`（`1ea9891`）
+- [x] **dev workflow 改用 junction** —— `scripts/make_dev_link.js` + `pnpm run dev` watch，"保存即热重载"
+- [x] **tech-debt 收尾** —— dead code 删除 + docs 更新（`39d0aa7`）
+
+详细测试场景见 [docs/TESTING_GUIDE_v2.2.0.md](docs/TESTING_GUIDE_v2.2.0.md)。
+
 ## 实施进度（2026-06-29）
 
 ### 已实施
