@@ -49,6 +49,8 @@ let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 
 let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round 4 fix（capture + cooldown）：键盘事件后 150ms 内 scroll/ResizeObserver 知道本次更新是键盘驱动
 let resumeBreatheTimer: ReturnType<typeof setTimeout> | null = null; // commit A fix：复用 setTimeout，避免堆叠；destroy 时清理
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
+let prevCursorX: number | null = null; // Q7：上一次写入 transform 时的 x，用于计算本帧移动距离 → 时长
+let prevCursorY: number | null = null; // Q7：上一次写入 transform 时的 y，同上
 let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 2/3 复用
 let wasOffScreen: boolean = false; // commit 2：上一帧是否离屏，用于检测穿越事件
 let squishAnimTimer: ReturnType<typeof setTimeout> | null = null; // commit 2：squish/bounce class 清理定时器
@@ -297,7 +299,11 @@ function doUpdateCursor(): void {
       return;
     }
     // commit 1：离屏（编辑器内），用 lastGoodCursorPos 保持位置，淡出
+    // onScrollOrWheel 加的 .no-transition 会卡在 case B 不被移除（rAF 只在 case C 执行），
+    // 导致 opacity 瞬间 0 → 看不到淡出。这里强制移除 + reflow 让淡出生效。
     if (lastGoodCursorPos) {
+      cursorEl.classList.remove("no-transition");
+      void cursorEl.offsetHeight;
       applyFadeAndScale(cursorEl, 0, EDGE_FADE.MIN_SCALE, lastGoodCursorPos);
     }
     pauseBreathe();
@@ -329,11 +335,11 @@ function doUpdateCursor(): void {
     }
   }
 
-  // 4) zIndex：取编辑器祖先链上最近的层叠上下文 + 1，再与思源全局 zIndex + 1 取大值
-  //    保证光标在嵌套编辑器/弹窗中也位于最上层
+  // 4) zIndex：取编辑器祖先链上最近的层叠上下文 + 1，不强制抬高到 siyuan 全局，
+  //    让悬浮窗/弹窗（通常 z-index 更高）能盖在光标上方。
+  //    参考实现：顺滑光标.js v0.0.12.4 也只用 effectiveZ + 1。
   const effectiveZ = getEffectiveZIndex(allowed.cursorElement!);
-  const siyuanZ = window.siyuan?.zIndex ?? 0;
-  cursorEl.style.zIndex = String(Math.max(effectiveZ + 1, siyuanZ + 1));
+  cursorEl.style.zIndex = String(effectiveZ + 1);
 
   // 5) commit 1：记录"上次正常位置"，用于离屏/边界失败时保持位置
   lastGoodCursorPos = { x: rect.x, y: rect.y, height: rect.height };
@@ -352,9 +358,16 @@ function doUpdateCursor(): void {
     applyFadeAndScale(cursorEl, edge.factor, scale, rect, yOffset);
   } else {
     // 远离边缘：清 inline opacity 让 CSS / 呼吸动画接管；transform 不带 scale
+    // Q7：长距离 = 长时长，避免"瞬移感"。distance / 1500 给出近似匀速的视觉速度，
+    //     clamp [0.08, 0.5] 防过冲（短距离不要太慢，长距离不要太拖）。
+    const dist = prevCursorX !== null ? Math.hypot(rect.x - prevCursorX, rect.y - prevCursorY!) : 0;
+    const dur = Math.min(0.5, Math.max(0.08, dist / 1500));
+    cursorEl.style.transition = `transform ${dur}s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out`;
     cursorEl.style.opacity = "";
     cursorEl.style.transform = `translate3d(${rect.x}px, ${rect.y - yOffset}px, 0)`;
     cursorEl.style.height = `${rect.height}px`;
+    prevCursorX = rect.x;
+    prevCursorY = rect.y;
   }
 
   // TODO-1：首次移动的 .no-transition 已在 createCursorElement 加上，
@@ -699,6 +712,8 @@ export function destroyCursor(): void {
   // commit 1：重置边缘交互状态
   lastGoodCursorPos = null;
   currentEdge = null;
+  prevCursorX = null; // Q7：重置距离记录，下次启动从头计算
+  prevCursorY = null;
 
   // commit 2：重置 squash / bounce 状态 + 清理动画定时器
   wasOffScreen = false;
