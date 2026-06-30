@@ -266,6 +266,24 @@ function doUpdateCursor(): void {
 
   // 3) 边界检测（3 重，round 3 移除第 3 重弹窗硬性排除）
   const allowed = isInAllowElements({ x: rect.x, y: rect.y });
+
+  // TODO-4 fix：把视口穿越动画提到边界早退之前，用 !isOuterElement 守门。
+  //   case A（isOuterElement=true：侧栏/AV/失焦）不触发，保持原早退语义。
+  //   case B（!allowed.allowed && !isOuterElement：编辑器内离屏）触发 squash/bounce。
+  //   case C（正常编辑器主区）由内层 !wasOff && isOff / wasOff && !isOff 守门，无穿越时静默。
+  //   wasOff=false → true  离开视口 → squash
+  //   wasOff=true → false 返回视口 → bounce
+  if (!allowed.isOuterElement) {
+    const wasOff = wasOffScreen;
+    const isOff = edge.isOffScreen;
+    if (!wasOff && isOff) {
+      triggerSquishAnimation(cursorEl);
+    } else if (wasOff && !isOff) {
+      triggerBounceAnimation(cursorEl);
+    }
+    wasOffScreen = isOff;
+  }
+
   if (!allowed.allowed) {
     // commit D + m0115 fix：区分两种边界失败
     //   isOuterElement = false → 光标在编辑器 DOM 内但已滚出视口
@@ -304,21 +322,6 @@ function doUpdateCursor(): void {
     showArrow("down");
   } else if (allowed.allowed === true) {
     hideArrow();
-  }
-
-  // commit 2：检测视口穿越事件（用于一次性 squash / bounce 动画）
-  //   仅在编辑器主区（case C）触发；case A / case B / 标题区早退，不会误触发
-  //   wasOff=false → true  离开视口 → 触发 squash
-  //   wasOff=true → false 返回视口 → 触发 bounce
-  if (cursorEl) {
-    const wasOff = wasOffScreen;
-    const isOff = edge.isOffScreen;
-    if (!wasOff && isOff) {
-      triggerSquishAnimation(cursorEl);
-    } else if (wasOff && !isOff) {
-      triggerBounceAnimation(cursorEl);
-    }
-    wasOffScreen = isOff;
   }
 
   // 4) zIndex：取编辑器祖先链上最近的层叠上下文 + 1，再与思源全局 zIndex + 1 取大值
