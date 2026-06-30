@@ -556,31 +556,73 @@ applyRipple():  // rAF 节流（pendingFrame 标志）
 #### 4.3.3 句级分割（`ripple.ts` 新增，v2.3.0）
 
 ```typescript
-// 把当前块按 .?! 切成句（用 Range 构造子 span）
+// v2.3.0：把当前块按 .?! 切成句（用 Range 构造临时 span）
+//
+// 关键技术决策（详见 docs/research/2026-06-30-siyuan-editor-dom.md）：
+// 1. block type 白名单：只处理 NodeParagraph/NodeHeading/NodeListItem，
+//    跳过 NodeCodeBlock/NodeBlockQueryEmbed/NodeAttributeView/NodeTable/NodeMathBlock
+// 2. 不用 range.surroundContents()（跨 inline 元素 strong/em/a 会抛 BAD_BOUNDARYPOINTS_ERR）
+//    改用 range.extractContents() + span.appendChild(fragment) + range.insertNode(span)
+// 3. 临时 span 样式：position:absolute + visibility:hidden + pointer-events:none
+//    （不影响布局、不响应点击）
+// 4. 必须保存/恢复 window.getSelection()，否则光标会跳到块尾
+// 5. 临时生命周期：当前帧创建，下一帧 removeSentenceSpans 清理
+//    （不污染 WYSIWYG.lastHTMLs，不影响 undo/redo）
+
 getSentences(block: HTMLElement): HTMLElement[] {
+  if (!isRippleTargetBlock(block)) return [];  // block type 过滤
   const text = block.textContent ?? '';
+  if (!text) return [];
+
+  // 1. 清理旧句级 span（防累积）
+  removeSentenceSpans(block);
+
+  // 2. 收集块内所有文本节点 + 偏移映射
+  const textNodes: Text[] = [];
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) textNodes.push(node);
+  // ... 构造 offsets 数组
+
+  // 3. 保存当前光标
+  const sel = window.getSelection();
+  const savedRange = sel?.getRangeAt(0).cloneRange();
+
+  // 4. 按标点切句 + 包裹
   const sentences: HTMLElement[] = [];
-  const regex = /[.?!。？！]+\s*/g;
-  let lastIdx = 0;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    // 构造一个 span 包裹 [lastIdx, match.index + match.length]
-    const range = document.createRange();
-    // ... 略：用 TreeWalker 找到对应 text node
-    const sentenceSpan = wrapRange(range);
-    if (sentenceSpan) sentences.push(sentenceSpan);
-    lastIdx = match.index + match.length;
+  // ... 遍历 regex.exec(text)，对每段 wrapTextRange(...)
+
+  // 5. 兜底 + 恢复光标
+  if (savedRange && sel) {
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
   }
   return sentences;
 }
 
 getCurrentSentence(block: HTMLElement): HTMLElement | null {
+  // 基于 window.getSelection() 的 anchorNode，向上找 .zt-sentence-span
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount) return null;
   const range = sel.getRangeAt(0);
-  // 找 range 所在的句 span
-  // ...
+  let node: Node | null = range.startContainer;
+  while (node && node !== block) {
+    if (node instanceof HTMLElement && node.classList.contains('zt-sentence-span')) {
+      return node;
+    }
+    node = node.parentNode;
+  }
+  return null; // 未找到句级 span，退化为块级
 }
+```
+
+**block type 白名单常量**（`ripple.ts` 顶部）：
+
+```typescript
+const RIPPLE_TARGET_BLOCK_TYPES = new Set(['NodeParagraph', 'NodeHeading', 'NodeListItem']);
+const RIPPLE_SKIP_BLOCK_TYPES = new Set([
+  'NodeCodeBlock', 'NodeBlockQueryEmbed', 'NodeAttributeView', 'NodeTable', 'NodeMathBlock',
+]);
 ```
 
 **性能**：句级分割只在 focus 激活 + selectionchange 时跑（被 `pendingFrame` rAF 节流），不会每帧扫。允许性能开销比之前稍大（用户已认可）。
