@@ -160,10 +160,13 @@ function checkAndScroll(): void {
 
   // 使用 editorRect（protyle-content 的 bounding rect）作为滚动锚点
   // 而非 container.getBoundingClientRect()（可能是更大的祖先元素）
-  const targetY = result.editorRect.top + result.editorRect.height * TARGET_RATIO;
+  // 注：AllowResult.editorRect 类型为 {top, bottom, left, right}（无 height 字段），
+  //     实际实现用 `bottom - top` 计算高度。等价于 plan 原意的 `editorRect.height`。
+  const editorHeight = result.editorRect.bottom - result.editorRect.top;
+  const targetY = result.editorRect.top + editorHeight * TARGET_RATIO;
   const offset = rect.y - targetY;
 
-  if (Math.abs(offset) >= THRESHOLD) {
+  if (Math.abs(offset) >= 1) {
     smoothScroll(container, offset);
   }
 }
@@ -352,9 +355,7 @@ function durationForDistance(dist: number): number {
 
 Update the existing destructure at line 8 from `const { TARGET_RATIO, THRESHOLD, DURATION } = TYPEWRITER_CONFIG;` to `const { TARGET_RATIO } = TYPEWRITER_CONFIG;` — **drop `THRESHOLD` and `DURATION`** from destructure. They remain defined in `config.ts` (not touched) for API stability but are no longer used by typewriter.ts. tsconfig has no `noUnusedLocals` (verified), so no tsc warning.
 
-**Part 3 — Smaller threshold + adaptive scroll.** Reduce `THRESHOLD` from 40px to **2px** so even tiny drift triggers a smooth scroll (which is fast for small distance due to Part 2). Or remove the threshold entirely and let the smallest scrolls happen.
-
-Add a tiny "dead zone" instead (e.g., `< 1px` doesn't trigger) to avoid floating-point noise.
+**Part 3 — Smaller threshold + adaptive scroll.** Reduce `THRESHOLD` from 40px to **1px** so even tiny drift triggers a smooth scroll (which is fast for small distance due to Part 2). Use 1px as a tiny "dead zone" against floating-point noise.
 
 Update `checkAndScroll()`:
 
