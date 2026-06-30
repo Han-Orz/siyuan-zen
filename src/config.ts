@@ -78,10 +78,10 @@ export const EDGE_FADE = {
  */
 export const TRANSITION = {
   TIERS: [
-    { maxDist: 30, duration: 0.05 },       // 极短距离（typing 1~3px）：snappy
-    { maxDist: 150, duration: 0.12 },     // 短距离（行内跳转）：顺滑
-    { maxDist: 500, duration: 0.30 },     // 中距离（跨段）：明显顺滑
-    { maxDist: Infinity, duration: 0.60 }, // 长距离（跨屏）：长缓动
+    { maxDist: 30, duration: 0.07 },       // 极短距离（typing 1~3px）：snappy
+    { maxDist: 150, duration: 0.15 },     // 短距离（行内跳转）：顺滑
+    { maxDist: 500, duration: 0.21 },     // 中距离（跨段）：明显顺滑
+    { maxDist: Infinity, duration: 0.30 }, // 长距离（跨屏）：长缓动
   ] as const,
 } as const;
 

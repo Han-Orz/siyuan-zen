@@ -22,6 +22,8 @@ export interface AllowResult {
   allowed: boolean;
   cursorElement: Element | null;
   isOuterElement: boolean;
+  /** protyle-content 的 bounding rect（若找到）。供 getEdgeProximity 对齐淡出边界到编辑器内容区。 */
+  editorRect?: { top: number; bottom: number; left: number; right: number };
   reason?: string; // 调试用，不参与 UI
 }
 
@@ -112,6 +114,12 @@ export function isInAllowElements(pos: { x: number; y: number }): AllowResult {
         allowed: isInScroll && isInEditor,
         cursorElement,
         isOuterElement: false,
+        editorRect: {
+          top: editorRect.top,
+          bottom: editorRect.bottom,
+          left: editorRect.left,
+          right: editorRect.right,
+        },
         reason:
           isInScroll && isInEditor ? undefined : "out of scroll container",
       };
@@ -121,11 +129,27 @@ export function isInAllowElements(pos: { x: number; y: number }): AllowResult {
       allowed: false,
       cursorElement,
       isOuterElement: false,
+      editorRect: {
+        top: editorRect.top,
+        bottom: editorRect.bottom,
+        left: editorRect.left,
+        right: editorRect.right,
+      },
       reason: "out of editor rect",
     };
   }
 
-  return { allowed: true, cursorElement, isOuterElement: false };
+  return {
+    allowed: true,
+    cursorElement,
+    isOuterElement: false,
+    editorRect: {
+      top: editorRect.top,
+      bottom: editorRect.bottom,
+      left: editorRect.left,
+      right: editorRect.right,
+    },
+  };
 }
 
 // P2: findClosestScrollableElement 已迁移到 ../../utils/scroll（统一去重）

@@ -51,6 +51,7 @@ let resumeBreatheTimer: ReturnType<typeof setTimeout> | null = null; // commit A
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
 let prevCursorX: number | null = null; // Q7：上一次写入 transform 时的 x，用于计算本帧移动距离 → 时长
 let prevCursorY: number | null = null; // Q7：上一次写入 transform 时的 y，同上
+let wasOffScreen = false; // Q-return：上一帧是否在 case B（编辑器内离屏），用于在 case C 入口强制恢复 transition 让淡入可见
 let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 3（箭头，已禁用）复用
 let arrowEl: HTMLDivElement | null = null; // commit 3：视口边缘箭头 DOM 引用
 let arrowVisible = false; // commit 3：箭头可见状态（避免重复写 class）
@@ -248,12 +249,14 @@ function doUpdateCursor(): void {
     return;
   }
 
-  // commit 1：边缘距离（供 fade/scale、commit 2/3 复用）
-  const edge = getEdgeProximity(rect);
-  currentEdge = edge;
-
   // 3) 边界检测（3 重，round 3 移除第 3 重弹窗硬性排除）
   const allowed = isInAllowElements({ x: rect.x, y: rect.y });
+
+  // commit 1：边缘距离（供 fade/scale、commit 2/3 复用）
+  // 传 editorRect 把淡出边界对齐到"编辑器内容区"而不是"裸视口"，让顶部对称底部。
+  // 注意：必须先算 allowed（拿到 editorRect）再调 getEdgeProximity。
+  const edge = getEdgeProximity(rect, allowed.editorRect);
+  currentEdge = edge;
 
   if (!allowed.allowed) {
     // commit D + m0115 fix：区分两种边界失败
@@ -275,7 +278,16 @@ function doUpdateCursor(): void {
     }
     pauseBreathe();
     scheduleResumeBreathe();
+    wasOffScreen = true; // Q-return：标记下一帧 case C 入口需要 force-remove .no-transition 让淡入可见
     return;
+  }
+
+  // Q-return：刚从 case B 回到视口，强制恢复 transition 让 fade-in 平滑过渡
+  // （onScrollOrWheel 在滚动时加的 .no-transition 不会自然消失，第一帧 opacity 写入会瞬切）
+  if (wasOffScreen) {
+    cursorEl.classList.remove("no-transition");
+    void cursorEl.offsetHeight;
+    wasOffScreen = false;
   }
 
   // 移动端标题：可选跳过光标显示（避免移动端键盘弹出时视觉噪音）
@@ -680,6 +692,7 @@ export function destroyCursor(): void {
   currentEdge = null;
   prevCursorX = null; // Q7：重置距离记录，下次启动从头计算
   prevCursorY = null;
+  wasOffScreen = false; // Q-return：重置"上一帧离屏"标记
 
   // commit 3：移除箭头 DOM 元素 + 重置可见状态
   if (arrowEl) {

@@ -40,17 +40,33 @@ const EDGE_NAMES: ReadonlyArray<"top" | "bottom" | "left" | "right"> = [
 
 /**
  * 计算光标矩形相对视口各边的带符号距离，找出最近边缘并给出淡出系数。
- * 距离定义：top = rect.y, bottom = vpH - (rect.y + rect.height),
- *           left = rect.x, right = vpW - (rect.x + rect.width)。
+ * 距离定义：top = rect.y - effectiveTop, bottom = effectiveBottom - (rect.y + rect.height),
+ *           left = rect.x - effectiveLeft, right = effectiveRight - (rect.x + rect.width)。
+ *
+ * editorRect（可选）：编辑器主区（protyle-content）的 bounding rect。
+ *   用来把淡出边界对齐到"编辑器内容区"而不是"裸视口"。SiYuan 顶部 ~55px 是
+ *   toolbar/breadcrumb/标题，不属于编辑器内容；如果用裸视口算边缘距离，光标在
+ *   顶部 editorRect.top=55 处就进入 case B（isInAllowElements 判定出界），但
+ *   getEdgeProximity 的 ZONE 内淡出永远到不了，导致顶部无渐变。
+ *   传 editorRect 后：effectiveTop = max(0, editorRect.top)，顶部淡出对齐到
+ *   editorRect.top = 55，行为与底部对称。
  */
-export function getEdgeProximity(rect: CursorRect): EdgeProximity {
+export function getEdgeProximity(
+  rect: CursorRect,
+  editorRect?: { top: number; bottom: number; left: number; right: number },
+): EdgeProximity {
   const vpW = window.innerWidth;
   const vpH = window.innerHeight;
 
-  const top = rect.y;
-  const bottom = vpH - (rect.y + rect.height);
-  const left = rect.x;
-  const right = vpW - (rect.x + rect.width);
+  const effectiveTop = editorRect ? Math.max(0, editorRect.top) : 0;
+  const effectiveBottom = editorRect ? Math.min(vpH, editorRect.bottom) : vpH;
+  const effectiveLeft = editorRect ? Math.max(0, editorRect.left) : 0;
+  const effectiveRight = editorRect ? Math.min(vpW, editorRect.right) : vpW;
+
+  const top = rect.y - effectiveTop;
+  const bottom = effectiveBottom - (rect.y + rect.height);
+  const left = rect.x - effectiveLeft;
+  const right = effectiveRight - (rect.x + rect.width);
 
   const raw = { top, bottom, left, right };
 
