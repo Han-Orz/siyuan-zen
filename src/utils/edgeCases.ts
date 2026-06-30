@@ -12,15 +12,22 @@ export function hasSelection(): boolean {
   return (sel?.toString().length ?? 0) > 0;
 }
 
-/** 思源编辑器处于只读状态（P2 修复：用 getActiveEditor 定位到当前活跃编辑器） */
+/** 思源编辑器处于只读状态（修复：检查光标所在元素的 isContentEditable） */
 export function isReadMode(): boolean {
+  const cursor = getCursorElement();
+  if (cursor) {
+    // 思源 .protyle-content 容器本身没有 contenteditable 属性，
+    // contenteditable=true 写在内部 block（paragraph/heading/list）上。
+    // 所以检查光标实际所在的元素，不是外层容器。
+    return (cursor as HTMLElement).isContentEditable !== true;
+  }
+  // fallback：无光标时检查活跃编辑器根
   const activeEditor = getActiveEditor();
-  if (!activeEditor) return true; // 无活跃编辑器 → 视为只读
-  // protyle.element 是编辑器根元素；查询其中的 .protyle-content 判定只读
+  if (!activeEditor) return true;
   const contentEl = activeEditor.protyle.element.querySelector(
     ".protyle-content",
   ) as HTMLElement | null;
-  return !contentEl || !contentEl.isContentEditable;
+  return !contentEl;
 }
 
 /** 悬浮窗（block__popover）处于打开状态 */
