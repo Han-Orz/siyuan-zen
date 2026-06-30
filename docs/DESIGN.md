@@ -619,11 +619,19 @@ getCurrentSentence(block: HTMLElement): HTMLElement | null {
 **block type 白名单常量**（`ripple.ts` 顶部）：
 
 ```typescript
-const RIPPLE_TARGET_BLOCK_TYPES = new Set(['NodeParagraph', 'NodeHeading', 'NodeListItem']);
-const RIPPLE_SKIP_BLOCK_TYPES = new Set([
-  'NodeCodeBlock', 'NodeBlockQueryEmbed', 'NodeAttributeView', 'NodeTable', 'NodeMathBlock',
+const RIPPLE_TARGET_BLOCK_TYPES = new Set([
+  'NodeParagraph', 'NodeHeading', 'NodeListItem', 'NodeBlockquote',
 ]);
+const RIPPLE_SKIP_BLOCK_TYPES = new Set([
+  'NodeCodeBlock', 'NodeBlockQueryEmbed', 'NodeAttributeView', 'NodeTable',
+  'NodeMathBlock', 'NodeSuperBlock',
+]);
+const RIPPLE_SKIP_SELECTORS = ['.av', '.av__mask', 'code', 'pre'];
 ```
+
+> 注：`NodeBlockquote` 在 v2.3.0 加入 TARGET（blockquote 文本可读，应享受涟漪渐淡）；
+> `NodeSuperBlock` 加入 SKIP（容器块，不应被切句）；
+> `RIPPLE_SKIP_SELECTORS` 额外以 CSS selector 形式排除 AV 框架、code、pre 元素。
 
 **性能**：句级分割只在 focus 激活 + selectionchange 时跑（被 `pendingFrame` rAF 节流），不会每帧扫。允许性能开销比之前稍大（用户已认可）。
 
