@@ -21,7 +21,7 @@ import mainCss from "./styles/index.scss";
 const STYLE_ID = "main";
 
 const STORAGE_KEY = "zentype-enabled";
-const ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>`;
+const ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"><defs><filter id="zt-mist"><feGaussianBlur stdDeviation="0.4"/></filter></defs><circle cx="12" cy="12" r="6.5" stroke="currentColor" stroke-width="1.6" filter="url(#zt-mist)"/></svg>`;
 
 export default class ZenType extends Plugin {
   private enabled: ModuleEnabled = {
@@ -86,11 +86,15 @@ export default class ZenType extends Plugin {
     });
 
     const allOn = this.isAllEnabled();
-    this.addTopBar({
+    const topBarItem = this.addTopBar({
       icon: ICON_SVG,
       title: allOn ? "zenType 已启用" : "zenType 已禁用",
       callback: () => this.toggleAll(),
     });
+    // v2.3.0：给顶栏图标容器加 class 以便 SCSS 应用呼吸动画
+    if (topBarItem) {
+      topBarItem.classList.add("zentype-topbar-icon");
+    }
 
     // === P2: EventBus 订阅（替代手动 WS / DOM 事件 / 白名单） ===
     // 所有 8 个事件都按 (on, off) 配对记录到 eventBusOffFns，onunload 时统一释放
