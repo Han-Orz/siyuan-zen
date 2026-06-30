@@ -36,11 +36,17 @@ export const CURSOR_CONFIG = {
 
 /** 打字机参数（光标保持在 38% 位置时滚动到屏幕中心）。 */
 export const TYPEWRITER_CONFIG = {
-  /** 滚动目标位置：编辑器可视区域高度的此比例处。 */
+  /** v2.2.1 旧字段，保留兼容（v2.3.0 改用 COMFORT_ZONE 区间）。 */
   TARGET_RATIO: 0.38,
-  /** 触发平滑滚动的偏移阈值（px）。 */
+  /** v2.3.0：舒适区间 [低, 高]。光标在此区间内时不触发滚动。 */
+  COMFORT_ZONE: [0.38, 0.50],
+  /** v2.3.0：滚动距离→时长分档（ms），从 typewriter.ts 移入 config。 */
+  SCROLL_DURATION_TIERS: [120, 180, 260, 360, 500],
+  /** v2.3.0：打字机滚动动画曲线（与光标 transition 一致）。 */
+  SCROLL_CURVE: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+  /** 保留兼容（v2.3.0 不再使用）。 */
   THRESHOLD: 40,
-  /** 滚动动画时长（ms）。 */
+  /** 保留兼容（v2.3.0 改用 SCROLL_DURATION_TIERS）。 */
   DURATION: 400,
 } as const;
 
@@ -67,8 +73,16 @@ export const TYPEWRITER_CONFIG = {
 
 /** 涟漪聚焦参数（按块距离衰减 opacity）。 */
 export const RIPPLE_CONFIG = {
-  /** 每级块距离对应的 opacity 衰减（0=完全淡化，1=不淡化）。 */
+  /** v2.2.1 旧字段，保留兼容（v2.3.0 改用 SENTENCE_LEVELS）。 */
   OPACITY_LEVELS: [1.0, 0.85, 0.6, 0.35, 0.15, 0.05] as const,
+  /** v2.3.0：句级 / 块级 opacity 梯度（5 档，替换旧的 6 档块级 OPACITY_LEVELS）。 */
+  SENTENCE_LEVELS: [1.0, 0.88, 0.72, 0.55, 0.42] as const,
+  /** v2.3.0：嵌入块基础值 × 此系数（TODO: 区分不同块类型）。 */
+  EMBED_MULTIPLIER: 0.85,
+  /** v2.3.0：列表深度每层 opacity × (1 - DEPTH_FACTOR)，最低 0.7。 */
+  DEPTH_FACTOR: 0.05,
+  /** v2.3.0：视觉权重下限（lerp 起点）。 */
+  WEIGHT_MIN: 0.85,
   /** 鼠标移动事件节流（ms）。 */
   MOUSE_THROTTLE: 100,
   /** 空闲多少毫秒后从 text 模式切到 mouse 模式。 */
