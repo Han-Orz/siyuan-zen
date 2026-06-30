@@ -45,7 +45,6 @@ const CURSOR_ID = "zentype-cursor";
 
 let cursorEl: HTMLDivElement | null = null;
 let pendingFrame: number | null = null;
-let isFirstMove = true; // round 3：首次移动跳过 transition（避免从默认位置"飞来"）
 let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 .no-transition，保留 0.15s 跳移动画
 let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round 4 fix（capture + cooldown）：键盘事件后 150ms 内 scroll/ResizeObserver 知道本次更新是键盘驱动
 let resumeBreatheTimer: ReturnType<typeof setTimeout> | null = null; // commit A fix：复用 setTimeout，避免堆叠；destroy 时清理
@@ -105,7 +104,10 @@ function createCursorElement(): HTMLDivElement {
   // commit D：DOM 刚创建时 transform 还未设置，默认在 (0,0)。
   // 直接把 transform 设到屏幕外，避免 initCursor 末端的 queueUpdate → 首次
   // doUpdateCursor 之间约 16ms 窗口内光标在视口左上角闪现。
-  // doUpdateCursor 首帧会无条件覆盖 transform + 加 .no-transition 关闭过渡。
+  // TODO-1：再加 .no-transition 类，从元素进 DOM 那一刻起关闭 transition，
+  // 防止 SCSS 默认 transition: transform 0.15s 把 (0,0)→(-9999,-9999) 滑出来。
+  // 首次 doUpdateCursor 写完真实位置后，rAF 会移除这个类。
+  el.classList.add("no-transition");
   el.style.transform = "translate3d(-9999px, -9999px, 0)";
   document.body.appendChild(el);
   return el;
@@ -355,11 +357,8 @@ function doUpdateCursor(): void {
     cursorEl.style.height = `${rect.height}px`;
   }
 
-  // 首次移动跳过过渡（避免从 (0,0) 滑到实际位置的"飞来"动画）
-  if (isFirstMove) {
-    cursorEl.classList.add("no-transition");
-    isFirstMove = false;
-  }
+  // TODO-1：首次移动的 .no-transition 已在 createCursorElement 加上，
+  // 下一帧的 rAF 会移除（line 376 下方）。此处的 isFirstMove 块已删除。
   // 文本选中时跳过顺滑过渡（光标应瞬间跳到选区末尾）
   const sel = window.getSelection();
   if (sel && sel.rangeCount > 0 && sel.toString()) {
@@ -665,9 +664,6 @@ export function destroyCursor(): void {
     cursorEl.classList.remove("squishing", "bouncing");
     cursorEl = null;
   }
-
-  // 重置首次移动标志
-  isFirstMove = true;
 
   // round 3 P1 清理：ResizeObserver / Popover 拖动 / 滚动容器事件
   protyleContentObserver?.disconnect();
