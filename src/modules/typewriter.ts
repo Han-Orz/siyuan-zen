@@ -1,15 +1,11 @@
 import { getActiveEditor } from "siyuan";
 import { getCursorRect } from "../utils/getCursorRect";
-import type { CursorRect } from "../types";
 import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
-import { getEffectiveZIndex } from "../utils/getEffectiveZIndex";
 import * as inputMode from "./inputMode";
 
-const HIGHLIGHT_ID = "zentype-highlight-line";
 const { TARGET_RATIO, THRESHOLD, DURATION } = TYPEWRITER_CONFIG;
 
-let highlightEl: HTMLDivElement | null = null;
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
 
@@ -25,28 +21,6 @@ function getEditorContainer(): HTMLElement | null {
   return activeEditor.protyle.element.querySelector(
     ".protyle-content",
   ) as HTMLElement | null;
-}
-
-function createHighlightElement(): HTMLDivElement {
-  let el = document.getElementById(HIGHLIGHT_ID) as HTMLDivElement | null;
-  if (el) return el;
-  el = document.createElement("div");
-  el.id = HIGHLIGHT_ID;
-  document.body.appendChild(el);
-  return el;
-}
-
-function updateHighlight(rect: CursorRect): void {
-  if (!highlightEl) return;
-  // 思源全屏模式会给容器一个高 z-index；用 getEffectiveZIndex 沿祖先链取最大层叠上下文 z-index
-  const container = getEditorContainer();
-  const editorZ = container ? getEffectiveZIndex(container) : 0;
-  highlightEl.style.zIndex = String(Math.max(editorZ + 1, 1000));
-  highlightEl.style.transform = `translate3d(0, ${rect.y - 4}px, 0)`;
-  highlightEl.style.height = `${rect.height + 8}px`;
-  highlightEl.style.left = `${rect.x}px`;
-  highlightEl.style.width = `${rect.width || 100}px`;
-  highlightEl.classList.add("visible");
 }
 
 function smoothScroll(target: HTMLElement, deltaY: number): void {
@@ -71,28 +45,17 @@ function smoothScroll(target: HTMLElement, deltaY: number): void {
 }
 
 function checkAndScroll(): void {
-  // 打字机模式关闭时：不显示高亮条，不自动滚动
-  if (!inputMode.isTypewriterActive()) {
-    highlightEl?.classList.remove("visible");
-    return;
-  }
+  // 打字机模式关闭时：不自动滚动
+  if (!inputMode.isTypewriterActive()) return;
 
-  if (shouldPauseTypewriter()) {
-    highlightEl?.classList.remove("visible");
-    return;
-  }
+  // 暂停场景（悬浮窗 / 只读 / 嵌入块）：不滚动
+  if (shouldPauseTypewriter()) return;
 
   const rect = getCursorRect();
-  if (!rect) {
-    highlightEl?.classList.remove("visible");
-    return;
-  }
+  if (!rect) return;
 
   const container = getEditorContainer();
   if (!container) return;
-
-  // 更新高亮条（总是更新）
-  updateHighlight(rect);
 
   // 计算距离并决定是否滚动
   const containerRect = container.getBoundingClientRect();
@@ -105,9 +68,6 @@ function checkAndScroll(): void {
 }
 
 export function initTypewriter(): void {
-  // 创建 DOM（CSS 由 index.ts 在插件加载时统一注入）
-  highlightEl = createHighlightElement();
-
   // 事件数组使用三元组以便保留 options
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", checkAndScroll],
@@ -134,10 +94,5 @@ export function destroyTypewriter(): void {
   if (pendingScroll !== null) {
     cancelAnimationFrame(pendingScroll);
     pendingScroll = null;
-  }
-
-  if (highlightEl) {
-    highlightEl.remove();
-    highlightEl = null;
   }
 }

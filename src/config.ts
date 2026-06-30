@@ -34,15 +34,36 @@ export const CURSOR_CONFIG = {
   BLINK_DELAY_MS: 1500,
 } as const;
 
-/** 打字机高亮条参数（光标保持在 38% 位置时滚动到屏幕中心）。 */
+/** 打字机参数（光标保持在 38% 位置时滚动到屏幕中心）。 */
 export const TYPEWRITER_CONFIG = {
-  /** 高亮条目标位置：编辑器可视区域高度的此比例处。 */
+  /** 滚动目标位置：编辑器可视区域高度的此比例处。 */
   TARGET_RATIO: 0.38,
   /** 触发平滑滚动的偏移阈值（px）。 */
   THRESHOLD: 40,
   /** 滚动动画时长（ms）。 */
   DURATION: 400,
 } as const;
+
+/* ---------------------------------------------------------------------------
+ * 高亮条 (highlight bar) 入口 — 当前未启用
+ *
+ * 状态：暂时禁用。typewriter 模块当前只做滚动，不再渲染高亮条。
+ *      相关 DOM / CSS 已移除（src/modules/typewriter.ts、src/styles/index.scss）。
+ *      本注释保留作为未来恢复入口。
+ *
+ * 恢复步骤（未来）：
+ *   1. src/modules/typewriter.ts
+ *        → 重新引入 createHighlightElement() + updateHighlight()
+ *        → initTypewriter() 创建 div，destroyTypewriter() 清理
+ *        → checkAndScroll() 在每条 early-return 路径清 .visible
+ *   2. src/styles/index.scss
+ *        → 恢复 #zentype-highlight-line + .visible 块（参见 git 历史 v2.2 之前）
+ *   3. 可选：考虑 Neo-Plus 风格的 CSS mask 方案
+ *        （见 参考/Neo-Plus-聚焦与打字机分析.md §4.5 — 收益最大但风险最高）
+ *
+ * 历史：v2.2.x 使用 #zentype-highlight-line div + CSS transform，z-index 由
+ *       src/utils/getEffectiveZIndex.ts 沿祖先链动态计算。P3 重构时下线。
+ * ------------------------------------------------------------------------- */
 
 /** 涟漪聚焦参数（按块距离衰减 opacity）。 */
 export const RIPPLE_CONFIG = {

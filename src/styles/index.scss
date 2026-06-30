@@ -99,24 +99,6 @@
 // 侧边栏拖动手柄禁止选择（防止拖动时被误插入 marker）
 .layout__resize { user-select: none; }
 
-// ===== 打字机高亮条 =====
-
-#zentype-highlight-line {
-  position: fixed;
-  pointer-events: none;
-  z-index: 1000; // fallback；typewriter.ts 会按编辑器容器 z-index 动态覆盖
-  width: 100%;
-  height: 0;
-  background: var(--zt-highlight-bg, rgba(242, 236, 222, 0.6));
-  transform: translate3d(0, 0, 0);
-  transition: transform 0.15s ease, opacity 0.3s ease-out;
-  opacity: 0;
-}
-
-#zentype-highlight-line.visible {
-  opacity: 1;
-}
-
-[data-theme-mode="dark"] {
-  --zt-highlight-bg: rgba(54, 52, 51, 0.45);
-}
+// ===== 打字机高亮条（暂时禁用） =====
+// P3 重构：先下线高亮条，专注滚动行为。详见 src/config.ts :: TYPEWRITER_HIGHLIGHT_RESERVED
+// 恢复时在此处补回 #zentype-highlight-line + [data-theme-mode="dark"] --zt-highlight-bg。
