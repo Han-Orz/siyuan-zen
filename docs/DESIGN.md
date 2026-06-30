@@ -902,7 +902,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | 方向键 ↑ 后再 ← | ✅ 移动 | ❌ 保持 OFF | ❌ 保持 OFF | 状态机单调退出 |
 | 鼠标拖蓝选文本 | ✅ 瞬跳 | ❌ 退出 | ❌ 退出 | `cursor.ts:601-603` mouseDown 记录 → mouseup 比对 |
 | 右键菜单 | ✅ 停在最后位置（静态） | ✅ 不影响 | ✅ 不影响 | `cursor.ts:723-725` `onMenuOpened → pauseBreathe()` |
-| 移动端标题编辑 | ❌ 不显示 | ✅ 滚到 38% | ✅ 跟随 | `cursor.ts:294-299` 移动端标题特殊分支 |
+| 移动端标题编辑 | ❌ 不显示 | ⏸ 推迟 | ⏸ 推迟 | **v2.3.0 推迟**：cursor 模块 OFF-LIMITS，`boundary.ts:84-87` 标题分支返回 `allowed:true` 但无 `editorRect` → typewriter 早退；ripple 通过 `closest('.protyle-wysiwyg')` 跳过标题。实现 title 支持需修改 boundary.ts（属于 cursor 模块），待 cursor 模块解除 OFF-LIMITS 后实现。 |
 | 移动端键盘弹出/收起 | ✅ 重定位 | ✅ 重定位 | ✅ 重定位 | `mobile-keyboard-show/hide` EventBus |
 | 分屏（split-screen） | ✅ 锁定活跃编辑器 | ✅ 锁定活跃编辑器 | ✅ 锁定活跃编辑器 | `isInAllowElements` 第一重 `getActiveEditor()` |
 | AV 数据库块 | ❌ 不显示 | ❌ 不滚 | ❌ 不参与 | `boundary.ts:69-76` `.av/.av__mask/.av__cursor` 排除 |

@@ -164,7 +164,7 @@ RIPPLE_CONFIG = {
 | 13 | 方向键 ↑ 后再 ← | typewriter/ripple 保持 OFF |
 | 14 | 鼠标拖蓝 | 退出 |
 | 15 | 右键菜单 | 暂停呼吸（`pauseBreathe`） |
-| 16 | 移动端标题编辑 | typewriter 滚到 38%，ripple 跟随 |
+| 16 | 移动端标题编辑 | typewriter 滚到 38%，ripple 跟随（**v2.3.0 推迟**：cursor 模块 OFF-LIMITS，待解除后实现） |
 | 17 | 分屏 | 锁定活跃编辑器 |
 
 ### 5.2 新增 4 场景（v2.3.0）
