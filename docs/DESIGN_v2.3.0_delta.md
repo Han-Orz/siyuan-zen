@@ -42,14 +42,15 @@
 
 ## 2. Bug 修复清单
 
-### 2.1 wheel / touchmove 退出 typewriter/focus 可能不生效（v2.3.0 修复）
+### 2.1 wheel / touchmove 退出 typewriter/focus 不生效 ✅（v2.3.0 已修复，commit `7a368db`）
 
 **症状**：用户报告滚轮后 typewriter/focus 仍处于 ON 状态
 
 **根因**：
 - `cursor.ts:534-590` 的 `onWheelExit` 已注册 wheel/touchmove handler
-- 但 handler 没有 `{ capture: true }`（与 keydown 不一致）
-- 可能受嵌套 iframe / 嵌入块影响
+- 但 handler 之前缺少 `{ capture: true }`（与 keydown/scroll/input 不一致）
+- 思源 scroll 容器内部 stopPropagation 可能拦截 bubble 末端的 document-level handler
+- **历史背景**：早期 cursor-optimization-plan.md:607 设计就是 `{ capture: true, passive: true }`，v2.2.0 focus-mode 重构（commit 63ab96b）时 capture 被无意遗漏——本次回归修复
 
 **修复**：
 ```typescript
@@ -66,6 +67,7 @@
 - 在普通段落上滚轮 → focus + typewriter 都退出
 - 在嵌入 iframe 内滚轮 → focus + typewriter 都退出（capture 阶段）
 - 在悬浮窗上滚轮 → 不影响 focus/typewriter（暂停场景）
+- typewriter 自动滚屏（Enter 后 smoothScroll）→ 不误退（程序触发不派发 wheel 事件）
 
 ### 2.2 块级插入动画突兀（v2.3.0 修复）
 

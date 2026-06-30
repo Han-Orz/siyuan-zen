@@ -16,7 +16,7 @@
 - **文档** `docs/DESIGN.md`（合并 7 个过时 doc）+ `docs/DESIGN_v2.3.0_delta.md`（v2.3.0 行为变化 / bug 修复 / 回归场景）
 
 ### Fixed
-- **wheel / touchmove 退出 typewriter/focus 可能不生效** —— 给 `cursor.ts:534-590` 的 `onWheelExit` 加 `{ capture: true }`（与 keydown 一致）
+- **wheel / touchmove 退出 typewriter/focus 不生效** —— `cursor.ts:589-590` 的 `onWheelExit` 加 `{ capture: true }`（与 keydown/scroll/input 一致，commit `7a368db`）。原本早期设计就是带 capture 的（`docs/archive/plans/cursor-optimization-plan.md:607`），但 v2.2.0 focus-mode 重构时 capture 被无意遗漏——本次回归修复。
 
 ### Changed
 - `smoothScroll(target, deltaY)` → `smoothScroll(target, {deltaY, duration, curve})`

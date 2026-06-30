@@ -783,8 +783,8 @@ disableTypewriter()      // 命令：手动关闭 typewriter
 | keyboard input (`input` event) | ✅ | | |
 | IME `compositionend` | ✅ | | |
 | 粘贴 (`paste` event) | — | — | — |
-| 滚轮 (`wheel`) | | ✅ | | **v2.3.0 TODO**: 见下 |
-| 触屏拖动 (`touchmove`) | | ✅ | | **v2.3.0 TODO**: 同 wheel |
+| 滚轮 (`wheel`) | | ✅ | | capture 阶段（v2.3.0 修复：`commit 7a368db`） |
+| 触屏拖动 (`touchmove`) | | ✅ | | capture 阶段（同 wheel） |
 | ↑ 方向键 (`ArrowUp`) | | ✅ | |
 | ↓ 方向键 (`ArrowDown`) | | ✅ | |
 | Page Up / Page Down | | ✅ | |
@@ -802,17 +802,8 @@ disableTypewriter()      // 命令：手动关闭 typewriter
 
 **Keep ON 触发器**：横向导航（←/→）/ 边界导航（Home/End）/ 取消（Esc）—— 不改变用户"主动编辑"意图。
 
-**v2.3.0 已知问题（待修复）**：
-- **wheel / touchmove 退出可能不生效**：用户报告滚轮后 typewriter/focus 仍处于 ON 状态
-- 代码侧：`cursor.ts:534-590` 的 `onWheelExit` 已在 document 注册 `wheel` / `touchmove` 监听器并调用 `inputMode.setBothOff()`
-- 可能原因（待排查）：
-  1. wheel handler 没有 capture（与 keydown 的 `{ capture: true }` 不一致）
-  2. 嵌套 iframe / 嵌入块中的 wheel 不冒泡到 document
-  3. `setBothOff` 之后一帧内 `applyRipple()` / `checkAndScroll()` 仍跑（短暂延迟感知）
-- v2.3.0 修复方向：
-  - 加 `{ capture: true }`（与 keydown 一致）
-  - 检查嵌套 iframe 是否需要单独注册
-  - 滚轮时暂停 debounce，避免一帧延迟
+**v2.3.0 修复历史**：
+- ✅ **wheel / touchmove 退出 typewriter/focus 不生效**（commit `7a368db`）：handler 加 `{ capture: true }`（与 keydown/scroll/input 一致）。这本来是早期设计意图（参见 `docs/archive/plans/cursor-optimization-plan.md:607`），但在 v2.2.0 focus-mode 重构时 capture 被无意遗漏——本次回归修复。剩余两条（嵌套 iframe 排查、暂停 debounce）暂未观察到，可作为后续优化项。
 
 ### 5.3 默认值 + 持久化
 
@@ -1031,7 +1022,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | **涟漪列表块动态算法** | Q5 = C：视觉权重 × 深度系数 | 列表项高度差异大，siblings 距离不够准 |
 | **TODO: 区分不同块类型** | 嵌入网页 / 嵌入笔记 / PDF / video / 代码块 / HTML 块各不同 | 用户要求；当前统一 ×0.85 太粗 |
 | **顶栏图标单圆环雾边** | `feGaussianBlur stdDeviation=0.4` 雾边 + breathe 动画，**不是同心圆** | 用户明确"单圆环 + 雾蒙蒙边缘" |
-| **wheel exit bug 修复** | wheel handler 加 `{ capture: true }` + 排查嵌套 iframe | 用户报告"滚轮退出 typewriter/focus 没有实现" |
+| **wheel exit bug 修复** ✅ | wheel handler 加 `{ capture: true }`（commit `7a368db`）—— 与 keydown/scroll/input 一致 | 用户报告"滚轮退出 typewriter/focus 没有实现" |
 | **清理文档** | 删 5 个过时 doc；CHANGELOG 移到 docs/；归档 6 个旧 plan | 文档漂移严重 |
 
 ### 9.8 明确推迟项
