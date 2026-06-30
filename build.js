@@ -41,8 +41,11 @@ function copyAssets() {
   fs.copyFileSync('preview.png', path.join(OUT_DIR, 'preview.png'));
   // Sanity check: with `type: 'css-text'` the compiled CSS must end up inside
   // index.js. Look for a known selector from src/styles/index.scss.
+  // (Previously also checked `#zentype-highlight-line` — removed in v2.2.1 P3
+  //  highlighter-bar deletion; the comment marker in index.scss:104 is not
+  //  bundled into JS. Check #zentype-cursor alone is sufficient.)
   const outJs = fs.readFileSync(OUT_FILE, 'utf-8');
-  if (!outJs.includes('#zentype-cursor') || !outJs.includes('#zentype-highlight-line')) {
+  if (!outJs.includes('#zentype-cursor')) {
     console.warn('Warning: index.js does not contain expected CSS rules. ' +
       'Check that sassPlugin type is "css-text" and the SCSS compiles.');
   }
