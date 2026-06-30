@@ -1,70 +1,23 @@
 # TODO — Known Issues
 
-> Discovered during user testing on 2026-06-30 (after commit 58d20f6).
-> All 4 issues are related to Plan 6 (cursor edge interaction).
+> **状态（2026-06-30）**：4 项全部解决，相关 commit 在 `fix/v2.2.0-cursor-optimization` 分支上。
 
-## [TODO-1] Initial cursor position transition is janky
+## 已解决
 
-**Symptom**: When the plugin loads or the cursor element is first created, the cursor visibly "whooshes" from the viewport edge to the current caret position.
+| 编号 | 问题 | 解决 commit |
+|---|---|---|
+| TODO-1 | 初始 cursor "whoosh" 从屏幕外滑入 | `ba0bcea` — `createCursorElement` 元素进 DOM 即加 `.no-transition` |
+| TODO-2 | 边缘箭头指示器不需要 | `84193de` — `EDGE_ARROW.ENABLED: false` + 包裹箭头 if/else 块 |
+| TODO-3 | 边缘定义太宽（60px 触发太早） | `924c337` — `EDGE_FADE.ZONE: 60 → 30`，后续用户手动收到 20 |
+| TODO-4 | 滚出顶部和底部动画不对称 | `c168586` — 把 squish/bounce 块提到边界早退前 + `!isOuterElement` 守门 |
 
-**Likely cause**: 
-- `createCursorElement()` initializes the cursor with `transform: translate3d(-9999px, -9999px, 0)` to hide it offscreen
-- First `doUpdateCursor()` sets the actual position
-- The `isFirstMove` flag is supposed to suppress the transition for the first move, but either:
-  - The flag is being cleared too early
-  - Or there's a race between the offscreen-init and the first update
-  - Or Fade+Scale (Commit 1) overwrote the `isFirstMove` logic
+## 后续 follow-up（独立，不在原 4 项内）
 
-**Fix direction**: Investigate `createCursorElement` + `isFirstMove` lifecycle. May need to add `.no-transition` class for the first 2-3 frames.
+- **顶部 / 底部动画对称性**（oracle 发现）：`getEdgeProximity` 用 viewport 边，`isInAllowElements` 用 protyle-content 的 rect，两套坐标系错位。修复在 `1ea9891` —— `getEdgeProximity` 接受可选 `editorRect` 参数，对齐两套边界。
+- **返回方向 instant jump**（顺带在 `1ea9891` 修）：`.no-transition` 漏移除导致回屏第一帧硬跳。新增 `wasOffScreen` 状态，case C 首帧 force-remove + reflow。
+- **Q7 距离→时长**（`0ee73ed`）：从内联 `dist/1500` 公式搬到 `config.TRANSITION.TIERS` 分档表（用户已手动调到 0.07/0.15/0.21/0.30）。
 
-## [TODO-2] Edge arrow indicator not needed
+## 仍存留（不在本次范围）
 
-**Decision**: Revert the edge arrow indicator feature (Plan 6 part 3, currently in commit 58d20f6).
-
-**Rationale**: User tested and feels the arrow adds visual noise without clear value. The fade+scale already conveys "cursor is off-screen" effectively.
-
-**How to revert**: 
-- Option A: `git revert 58d20f6` (loses squish/bounce too — they're combined in this commit)
-- Option B: Manually extract arrow code from current working tree and delete it, then split Commit 3 into Commit 2 (squish/bounce) + Commit 3 (arrow-only-then-revert) — too much work
-- Option C: Accept current state (squish/bounce + arrow combined), add `enabled: boolean` config flag for arrow and default to OFF — easiest
-
-**Recommendation**: Option C. Add `EDGE_ARROW.ENABLED: false` to config, hide arrow div by default.
-
-## [TODO-3] Edge definition too loose — animation triggers too early
-
-**Symptom**: The fade/scale/squish/bounce animations trigger when the caret is at the last visible line, before the caret actually scrolls off-screen.
-
-**Current behavior**: `FADE_ZONE = 60px` — animation starts 60px from the viewport edge. User finds this too aggressive.
-
-**Desired behavior**: Edge animation should only trigger when caret is within 15-20px of the viewport edge (very close to being off-screen).
-
-**Fix direction**: 
-- Reduce `FADE_ZONE` from 60px to ~30px (so animation finishes at 30px from edge, rather than 60px)
-- OR add a separate `EDGE_TRIGGER_THRESHOLD` (~15-20px) that gates whether any animation starts at all
-- Recommend the threshold approach — keeps fade zone smooth but only animates near the edge
-
-## [TODO-4] Scroll direction asymmetry
-
-**Symptom**: Scrolling UP triggers the edge animation (fade/scale/squish/bounce), but scrolling DOWN does not.
-
-**Likely cause**: 
-- The `currentEdge` / edge detection logic uses `rect.y < 0` (above viewport) vs `rect.y > viewport.height` (below viewport) 
-- One of these conditions may have a sign error or off-by-one
-- Or the boundary check in `doUpdateCursor` is rejecting the "below viewport" case earlier than the "above viewport" case
-
-**Fix direction**: Add unit-test-style logging to `doUpdateCursor` for both scroll directions. Compare `rect.y` vs viewport bounds and `currentEdge` assignment.
-
----
-
-## Priority order
-1. TODO-1 (janky initial) — most visible, fix ASAP
-2. TODO-4 (asymmetry) — correctness bug, fix ASAP
-3. TODO-3 (edge too loose) — UX tuning, fix soon
-4. TODO-2 (arrow disabled) — easy config flag, defer
-
-## Next session plan
-- Investigate TODO-1 and TODO-4 together (both in `doUpdateCursor` lifecycle)
-- Tune TODO-3 by reducing FADE_ZONE
-- Add `EDGE_ARROW.ENABLED: false` for TODO-2
-- Land as separate commits for clean rollback
-- Update TESTING_GUIDE_v2.2.0.md with new test scenarios
+- **EDGE_ARROW 相关函数**：`createArrowElement` / `showArrow` / `hideArrow` / `getOffScreenArrowPosition` 因 `ENABLED=false` 不可达，但代码保留作为 opt-in 入口。如决定彻底删除可单独提一个 cleanup commit。
+- **`applyFadeAndScale` 的 `scale` 参数**：3 个调用点都传 `EDGE_FADE.MIN_SCALE`，参数实际上等价于常量。可清理（变成不带 scale 参数的 `applyFade`），但行为不变，只是冗余。

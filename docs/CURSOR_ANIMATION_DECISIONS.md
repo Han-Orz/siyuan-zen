@@ -41,11 +41,21 @@ Cursor breathing animation in `src/styles/index.scss`:
 **Plan 6 additions (commits 68297da + 58d20f6)**:
 - **Fade + Scale** (Commit 1): Near viewport edges (within `FADE_ZONE = 60px`), cursor opacity + scale smoothly decrease. Fully off-screen → opacity=0, scale=0.6, position frozen at `lastGoodCursorPos`.
 - **Squash + Bounce** (Commit 2, combined into 58d20f6): One-shot CSS animations on edge crossings. `scaleX(0.5)/scaleY(1.4)` squish (300ms ease-out) when leaving viewport; `scale(1.15)` overshoot bounce (400ms cubic-bezier(0.34, 1.56, 0.64, 1)) when re-entering.
-- **Edge Arrow** (Commit 3, combined into 58d20f6): A small border-trick triangle at the viewport edge when cursor is off-screen, horizontally aligned with caret position. **`EDGE_ARROW.OPACITY = 0.6`**, `SIZE = 12px`, `OFFSET = 8px`, `TRANSITION_MS = 200ms`. **Note**: User wants this disabled — see TODO-2.
+
+  **Status**: 在 `0ee73ed refactor(cursor): drop squish/bounce, move Q7 to config tiers` 中下线。用户测试反馈：scale 动画显得像弹弓，要求去掉。代码从 styles + cursor.ts 删除，state `wasOffScreen` / `squishAnimTimer` 也清掉。需要恢复从 `282a964 fix(cursor): preserve cursor position during edge animations` 取。
+- **Edge Arrow** (Commit 3, combined into 58d20f6): A small border-trick triangle at the viewport edge when cursor is off-screen, horizontally aligned with caret position. **`EDGE_ARROW.OPACITY = 0.6`**, `SIZE = 12px`, `OFFSET = 8px`, `TRANSITION_MS = 200ms`.
+
+  **Status**: 在 `84193de chore(cursor): disable edge arrow indicator by default (TODO-2)` 中默认关闭（`ENABLED: false`），代码保留为 opt-in。
+
+**Plan 6 fix iterations (`fix/v2.2.0-cursor-optimization` 分支)**:
+- `1ea9891 fix(cursor): align edge-fade boundary to editor rect + smooth return fade` —— 顶部/底部边缘对齐到 protyle-content rect（之前 viewport 顶 vs editor 顶错位 ~55px），返回方向 `.no-transition` 漏移除也修了。
+- `0ee73ed` —— squish/bounce 下线（见上）。
+- `282a964` —— Q4 (0,0) 跳修复 + case B force-remove `.no-transition` 让顶部 fade 可见。
+- `ba0bcea / 924c337 / 84193de / c168586` —— TODO-1~4 四个修复。
 
 **User feedback (2026-06-29)**: breathing animation works but feels "stiff" / "jerky". 4 keyframes + 3.5s = visible plateau + abrupt loop boundary transition. "Worse than v2.2.0-pre."
 
-**User feedback (2026-06-30, Plan 6)**: 4 issues found — see [TODO.md](TODO.md).
+**User feedback (2026-06-30, Plan 6)**: 4 issues found —— see [TODO.md](TODO.md)。所有 4 项已修。
 
 ---
 

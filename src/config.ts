@@ -57,7 +57,7 @@ export const RIPPLE_CONFIG = {
 /** 边缘交互：光标接近视口边缘时的淡出 + 缩放。 */
 export const EDGE_FADE = {
   /** 距视口边缘的距离（px），淡出 + 缩放在此范围内完成。TODO-3：从 60 收紧到 30，避免最后一行的 caret 就触发淡出。 */
-  ZONE: 30,
+  ZONE: 20,
   /** 光标完全离开视口时的最小缩放系数。 */
   MIN_SCALE: 0.6,
 } as const;

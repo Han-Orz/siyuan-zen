@@ -651,8 +651,6 @@ export function destroyCursor(): void {
   // 移除 DOM 元素
   if (cursorEl) {
     cursorEl.remove();
-    // commit 2：DOM 移除前清理动画 class（确保 destroy 时无残留动画）
-    cursorEl.classList.remove("squishing", "bouncing");
     cursorEl = null;
   }
 
