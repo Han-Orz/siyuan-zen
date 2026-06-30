@@ -585,9 +585,10 @@ export function initCursor(): void {
       onScrollOrWheel as EventListener,
       { capture: true, passive: true },
     ],
-    // 聚焦/打字机模式：wheel/touchmove 退出
-    ["wheel", onWheelExit, { passive: true }],
-    ["touchmove", onWheelExit, { passive: true }],
+    // 聚焦/打字机模式：wheel/touchmove 退出（capture 阶段，与 scroll/keydown/input 一致；
+    //  避免思源 scroll 容器内部 stopPropagation 拦截 bubble 末端 handler）
+    ["wheel", onWheelExit, { capture: true, passive: true }],
+    ["touchmove", onWheelExit, { capture: true, passive: true }],
     // 聚焦/打字机模式：IME 完成开启
     ["compositionend", () => {
       inputMode.setBothOn();
