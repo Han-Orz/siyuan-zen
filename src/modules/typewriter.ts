@@ -5,7 +5,7 @@ import { shouldPauseTypewriter } from "../utils/edgeCases";
 import * as inputMode from "./inputMode";
 import { isInAllowElements } from "./cursor/boundary";
 
-const { TARGET_RATIO } = TYPEWRITER_CONFIG;
+const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE } = TYPEWRITER_CONFIG;
 
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
@@ -20,15 +20,29 @@ function easeInOutCubic(t: number): number {
 }
 
 function durationForDistance(dist: number): number {
-  // dist 单位：px（绝对值）
-  if (dist < 20) return 120;   // 微调：快速
-  if (dist < 60) return 180;   // 短距：平滑
-  if (dist < 150) return 260;  // 中距：跟手
-  if (dist < 400) return 360;  // 长距：可观察
-  return 500;                  // 远跳：留时间感知
+  // 从 config 查表（SCROLL_DURATION_TIERS: [120, 180, 260, 360, 500]）
+  // 分档阈值与旧版一致：[0-20)→120, [20-60)→180, [60-150)→260, [150-400)→360, [400+∞)→500
+  if (dist < 20) return SCROLL_DURATION_TIERS[0];
+  if (dist < 60) return SCROLL_DURATION_TIERS[1];
+  if (dist < 150) return SCROLL_DURATION_TIERS[2];
+  if (dist < 400) return SCROLL_DURATION_TIERS[3];
+  return SCROLL_DURATION_TIERS[4];
 }
 
-function smoothScroll(target: HTMLElement, deltaY: number): void {
+interface SmoothScrollOptions {
+  deltaY: number;
+  /** 覆盖 config 分档（可选）。 */
+  duration?: number;
+  /** 覆盖 SCROLL_CURVE（可选，用于 FLIP 等特殊场景）。当前 rAF 路径暂未接入。 */
+  curve?: string;
+}
+
+function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
+  const { deltaY, duration, curve } = options;
+  // curve 暂存以备未来 CSS scroll-behavior 或 animateNaturalReflow 使用；
+  // 当前 rAF 路径仍使用 easeInOutCubic 作为缓动函数。
+  const _curve = curve ?? SCROLL_CURVE;
+
   // 续接：同一 target 且动画进行中，仅追加 deltaY，动画继续
   if (pendingScroll !== null && pendingScrollTarget === target) {
     pendingScrollEnd += deltaY;
@@ -43,11 +57,11 @@ function smoothScroll(target: HTMLElement, deltaY: number): void {
 
   const startScroll = target.scrollTop;
   const startTime = performance.now();
-  const duration = durationForDistance(Math.abs(deltaY));
+  const dur = duration ?? durationForDistance(Math.abs(deltaY));
 
   function step() {
     const elapsed = performance.now() - startTime;
-    const t = Math.min(elapsed / duration, 1);
+    const t = Math.min(elapsed / dur, 1);
     const eased = easeInOutCubic(t);
     const maxScroll = target.scrollHeight - target.clientHeight;
     const currentEnd = pendingScrollEnd; // read latest
@@ -108,11 +122,21 @@ function checkAndScroll(): void {
   // 而非 container.getBoundingClientRect()（可能是更大的祖先元素）
   // 注：AllowResult.editorRect 只有 top/bottom/left/right，无 height 字段（不像 DOMRect）
   const editorHeight = result.editorRect.bottom - result.editorRect.top;
-  const targetY = result.editorRect.top + editorHeight * TARGET_RATIO;
-  const offset = rect.y - targetY;
+  const cursorPct = (rect.y - result.editorRect.top) / editorHeight;
 
-  if (Math.abs(offset) >= 1) {
-    smoothScroll(container, offset);
+  // v2.3.0：舒适区间 [COMFORT_ZONE[0], COMFORT_ZONE[1]]，区间内不滚
+  let deltaY = 0;
+  if (cursorPct < COMFORT_ZONE[0]) {
+    // 光标在舒适区上方 → 滚到 COMFORT_ZONE[0]
+    deltaY = (COMFORT_ZONE[0] - cursorPct) * editorHeight;
+  } else if (cursorPct > COMFORT_ZONE[1]) {
+    // 光标在舒适区下方 → 滚到 COMFORT_ZONE[1]
+    deltaY = (COMFORT_ZONE[1] - cursorPct) * editorHeight;
+  }
+  // else: 舒适区内，deltaY = 0，不滚
+
+  if (Math.abs(deltaY) >= 1) {
+    smoothScroll(container, { deltaY });
   }
 }
 
