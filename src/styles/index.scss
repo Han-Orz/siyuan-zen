@@ -50,34 +50,10 @@
   100% { opacity: 1.00; }
 }
 
-// commit 2：squash 关键帧——光标离开视口时的"挤压"动画
-// 用独立 scale 属性（CSS Transform Module Level 2），不覆盖 inline transform 的 translate3d，
-// 否则光标会跳到 (0,0) 然后才播放动画
-@keyframes zentype-squish {
-  0%   { scale: 1 1; }
-  30%  { scale: 0.5 1.4; }
-  60%  { scale: 1.15 0.85; }
-  100% { scale: 1 1; }
-}
-
-// commit 2：bounce 关键帧——光标返回视口时的"回弹"动画
-// 从小尺寸 (0.6) 弹起到 1.15，再回落到 1.0
-@keyframes zentype-bounce {
-  0%   { scale: 0.6; }
-  50%  { scale: 1.15; }
-  75%  { scale: 0.95; }
-  100% { scale: 1; }
-}
-
-// commit 2：squish / bounce 一次性动画 class
-// !important 用于覆盖 .no-animation 的 animation: none，以及 inline transform
-#zentype-cursor.squishing {
-  animation: zentype-squish 0.3s ease-out forwards !important;
-}
-
-#zentype-cursor.bouncing {
-  animation: zentype-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards !important;
-}
+// commit 2（已下线）：squish / bounce 关键帧。用户测试后认为"弹弓"动画太突兀，
+// 整个边缘缩放动画路线已下线；保留 case B 的平滑 opacity 淡出。
+// 重新启用方法：从 git 历史恢复 @keyframes zentype-squish/bounce + .squishing/.bouncing，
+// 并在 cursor.ts 的 doUpdateCursor 边界检测后重新调用 triggerSquish/triggerBounceAnimation。
 
 // commit 3：视口边缘箭头指示器
 //   三角形用 CSS border-trick 实现；data-direction 切换方向

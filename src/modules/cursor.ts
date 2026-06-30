@@ -26,7 +26,7 @@
  */
 
 import type { IProtyle, IWebSocketData } from "siyuan/types";
-import { CURSOR_CONFIG, EDGE_ARROW, EDGE_FADE, SQUISH_BOUNCE } from "../config";
+import { CURSOR_CONFIG, EDGE_ARROW, EDGE_FADE, TRANSITION } from "../config";
 import { getCursorRect } from "../utils/getCursorRect";
 import { findAllScrollableAncestors } from "../utils/scroll";
 import { isInAllowElements } from "./cursor/boundary";
@@ -51,9 +51,7 @@ let resumeBreatheTimer: ReturnType<typeof setTimeout> | null = null; // commit A
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
 let prevCursorX: number | null = null; // Q7：上一次写入 transform 时的 x，用于计算本帧移动距离 → 时长
 let prevCursorY: number | null = null; // Q7：上一次写入 transform 时的 y，同上
-let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 2/3 复用
-let wasOffScreen: boolean = false; // commit 2：上一帧是否离屏，用于检测穿越事件
-let squishAnimTimer: ReturnType<typeof setTimeout> | null = null; // commit 2：squish/bounce class 清理定时器
+let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 3（箭头，已禁用）复用
 let arrowEl: HTMLDivElement | null = null; // commit 3：视口边缘箭头 DOM 引用
 let arrowVisible = false; // commit 3：箭头可见状态（避免重复写 class）
 
@@ -64,6 +62,17 @@ function markKeyboardPending(): void {
     pendingKeyboardUpdate = false;
     keyboardCooldownTimer = null;
   }, 150);
+}
+
+/**
+ * Q7：根据光标移动距离查表得出过渡时长（秒）。
+ * 表在 src/config.ts 的 TRANSITION.TIERS 里，用户可自行调整。
+ */
+function transitionDurationForDistance(dist: number): number {
+  for (const tier of TRANSITION.TIERS) {
+    if (dist <= tier.maxDist) return tier.duration;
+  }
+  return TRANSITION.TIERS[TRANSITION.TIERS.length - 1].duration;
 }
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 
@@ -133,35 +142,10 @@ function applyFadeAndScale(
 }
 
 /**
- * commit 2：触发 squash 一次性动画（光标离开视口时）。
- * 强制 reflow 让 class 重新计算动画起点，避免快速连续触发时动画不重启。
+ * commit 2（已下线）：squish / bounce 触发函数。用户测试后认为缩放弹动画太突兀，
+ * 整个边缘缩放动画路线已下线；保留 case B 的平滑 opacity 淡出。
+ * 如果以后想重新启用，可以从 git 历史恢复这两个函数 + SCSS keyframes + 这里的触发块。
  */
-function triggerSquishAnimation(el: HTMLDivElement): void {
-  el.classList.remove("squishing", "bouncing");
-  // 强制 reflow：让浏览器记录"无动画"状态，使后续 add 视为新动画
-  void el.offsetHeight;
-  el.classList.add("squishing");
-  if (squishAnimTimer !== null) clearTimeout(squishAnimTimer);
-  squishAnimTimer = setTimeout(() => {
-    el.classList.remove("squishing");
-    squishAnimTimer = null;
-  }, SQUISH_BOUNCE.SQUISH_DURATION + 20); // +20ms 安全余量
-}
-
-/**
- * commit 2：触发 bounce 一次性动画（光标返回视口时）。
- * 与 triggerSquishAnimation 同结构，便于连续穿越时快速切换。
- */
-function triggerBounceAnimation(el: HTMLDivElement): void {
-  el.classList.remove("squishing", "bouncing");
-  void el.offsetHeight;
-  el.classList.add("bouncing");
-  if (squishAnimTimer !== null) clearTimeout(squishAnimTimer);
-  squishAnimTimer = setTimeout(() => {
-    el.classList.remove("bouncing");
-    squishAnimTimer = null;
-  }, SQUISH_BOUNCE.BOUNCE_DURATION + 20);
-}
 
 /**
  * commit 3：创建或获取 #zentype-edge-arrow DOM 元素。
@@ -271,23 +255,6 @@ function doUpdateCursor(): void {
   // 3) 边界检测（3 重，round 3 移除第 3 重弹窗硬性排除）
   const allowed = isInAllowElements({ x: rect.x, y: rect.y });
 
-  // TODO-4 fix：把视口穿越动画提到边界早退之前，用 !isOuterElement 守门。
-  //   case A（isOuterElement=true：侧栏/AV/失焦）不触发，保持原早退语义。
-  //   case B（!allowed.allowed && !isOuterElement：编辑器内离屏）触发 squash/bounce。
-  //   case C（正常编辑器主区）由内层 !wasOff && isOff / wasOff && !isOff 守门，无穿越时静默。
-  //   wasOff=false → true  离开视口 → squash
-  //   wasOff=true → false 返回视口 → bounce
-  if (!allowed.isOuterElement) {
-    const wasOff = wasOffScreen;
-    const isOff = edge.isOffScreen;
-    if (!wasOff && isOff) {
-      triggerSquishAnimation(cursorEl);
-    } else if (wasOff && !isOff) {
-      triggerBounceAnimation(cursorEl);
-    }
-    wasOffScreen = isOff;
-  }
-
   if (!allowed.allowed) {
     // commit D + m0115 fix：区分两种边界失败
     //   isOuterElement = false → 光标在编辑器 DOM 内但已滚出视口
@@ -358,10 +325,9 @@ function doUpdateCursor(): void {
     applyFadeAndScale(cursorEl, edge.factor, scale, rect, yOffset);
   } else {
     // 远离边缘：清 inline opacity 让 CSS / 呼吸动画接管；transform 不带 scale
-    // Q7：长距离 = 长时长，避免"瞬移感"。distance / 1500 给出近似匀速的视觉速度，
-    //     clamp [0.08, 0.5] 防过冲（短距离不要太慢，长距离不要太拖）。
+    // Q7：长距离 = 长时长。查表 TRANSITION.TIERS（config.ts），用户可自行调整。
     const dist = prevCursorX !== null ? Math.hypot(rect.x - prevCursorX, rect.y - prevCursorY!) : 0;
-    const dur = Math.min(0.5, Math.max(0.08, dist / 1500));
+    const dur = transitionDurationForDistance(dist);
     cursorEl.style.transition = `transform ${dur}s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out`;
     cursorEl.style.opacity = "";
     cursorEl.style.transform = `translate3d(${rect.x}px, ${rect.y - yOffset}px, 0)`;
@@ -714,13 +680,6 @@ export function destroyCursor(): void {
   currentEdge = null;
   prevCursorX = null; // Q7：重置距离记录，下次启动从头计算
   prevCursorY = null;
-
-  // commit 2：重置 squash / bounce 状态 + 清理动画定时器
-  wasOffScreen = false;
-  if (squishAnimTimer !== null) {
-    clearTimeout(squishAnimTimer);
-    squishAnimTimer = null;
-  }
 
   // commit 3：移除箭头 DOM 元素 + 重置可见状态
   if (arrowEl) {

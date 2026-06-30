@@ -62,12 +62,27 @@ export const EDGE_FADE = {
   MIN_SCALE: 0.6,
 } as const;
 
-/** 边缘交互：穿越视口边界时的一次性 squash / bounce 动画。 */
-export const SQUISH_BOUNCE = {
-  /** squash（压缩）阶段时长（ms）。 */
-  SQUISH_DURATION: 300,
-  /** bounce（回弹）阶段时长（ms）。 */
-  BOUNCE_DURATION: 400,
+/**
+ * 光标移动距离 → 过渡时长映射。距离越大，时长越长（避免长距离瞬移感）。
+ *
+ * 当前光标离屏时不播放边缘动画（squish/bounce 已回滚），所以此处只影响
+ * 在视口内移动的情况：typing / click 选行 / Enter 跳块 等。
+ *
+ * 用法：在数组中调整 `{ maxDist, duration }`。距离 < maxDist 时使用对应 duration。
+ * 最后一个的 maxDist 用 Infinity 表示"超过所有前面阈值的距离"。
+ *
+ * 调整建议：
+ *   - 想 typing 更干脆：把第一个 duration 调小（0.04 ~ 0.06）
+ *   - 想长跳转更顺滑：把最后一个 duration 调大（0.5 ~ 1.0）
+ *   - 想中间档位更细分：往数组里加元素
+ */
+export const TRANSITION = {
+  TIERS: [
+    { maxDist: 30, duration: 0.05 },       // 极短距离（typing 1~3px）：snappy
+    { maxDist: 150, duration: 0.12 },     // 短距离（行内跳转）：顺滑
+    { maxDist: 500, duration: 0.30 },     // 中距离（跨段）：明显顺滑
+    { maxDist: Infinity, duration: 0.60 }, // 长距离（跨屏）：长缓动
+  ] as const,
 } as const;
 
 /** 边缘交互：视口边缘方向箭头指示器。 */
