@@ -1,4 +1,5 @@
 import { getCursorElement } from "../utils/getCursorElement";
+import { getCursorRect } from "../utils/getCursorRect";
 import { shouldPauseFocusAndTypewriter, isReadMode } from "../utils/edgeCases";
 import type { RippleMode } from "../types";
 import { RIPPLE_CONFIG } from "../config";
@@ -19,13 +20,12 @@ import * as inputMode from "./inputMode";
  */
 
 const {
-  OPACITY_LEVELS,
-  MOUSE_THROTTLE,
-  IDLE_THRESHOLD,
   SENTENCE_LEVELS,
   EMBED_MULTIPLIER,
   DEPTH_FACTOR,
   WEIGHT_MIN,
+  MOUSE_THROTTLE,
+  IDLE_THRESHOLD,
 } = RIPPLE_CONFIG;
 const SCROLLBAR_MARGIN = 20; // px
 
@@ -61,7 +61,7 @@ function isOverScrollbar(e: MouseEvent): boolean {
   return e.clientX > w - SCROLLBAR_MARGIN || e.clientY > h - SCROLLBAR_MARGIN;
 }
 
-function applyRipple(): void {
+function applyRipple(focusBlock?: HTMLElement | null): void {
   if (pendingFrame !== null) return;
   pendingFrame = requestAnimationFrame(() => {
     pendingFrame = null;
@@ -78,32 +78,49 @@ function applyRipple(): void {
       return;
     }
 
-    const currentBlock = getCurrentBlock();
+    const currentBlock = (focusBlock ?? getCurrentBlock()) as HTMLElement | null;
     if (!currentBlock) return;
 
-    const container = currentBlock.closest(".protyle-wysiwyg");
+    const container = currentBlock.closest(".protyle-wysiwyg") as HTMLElement | null;
     if (!container) return;
 
-    const allBlocks = Array.from(
-      container.querySelectorAll('[data-node-id], iframe, video')
-    );
+    // v2.3.0：句级切分（getSentences 内部已清理旧 span 并暴露 .zt-sentence-span）
+    const spansByBlock = getSentences(container, currentBlock);
+    const cursorRect = getCursorRect();
+    const currentSentence = getCurrentSentence(container, cursorRect);
 
+    // v2.3.0：块级 opacity — 所有 ripple 目标块（标题/列表/引用等），
+    // 距离越远 baseLevel 越低；嵌入块再 × EMBED_MULTIPLIER。
+    // 不可读块（code/AV/math/superblock 等）由 isRippleTargetBlock 过滤。
+    const allBlocks = container.querySelectorAll<HTMLElement>('[data-node-id], iframe, video');
     allBlocks.forEach((block) => {
-      const distance = calculateBlockDistance(currentBlock, block as Element);
-      const opacity = OPACITY_LEVELS[Math.min(distance, OPACITY_LEVELS.length - 1)];
-      (block as HTMLElement).style.opacity = String(opacity);
+      if (!isRippleTargetBlock(block)) return;
+      const distance = calculateBlockDistance(currentBlock, block);
+      const baseLevel = SENTENCE_LEVELS[Math.min(distance, SENTENCE_LEVELS.length - 1)];
+      const weight = visualWeightOf(block);
+      const depthFactor = calculateDepthFactor(depthOf(block));
+      const embedMult = isEmbedBlock(block) ? EMBED_MULTIPLIER : 1;
+      const weightFactor = WEIGHT_MIN + weight * (1 - WEIGHT_MIN);
+      const blockOpacity = baseLevel * weightFactor * depthFactor * embedMult;
+      block.style.opacity = String(blockOpacity);
     });
 
-    (currentBlock as HTMLElement).style.opacity = "1";
+    // v2.3.0：句级微调 — 仅当前块内非当前句 = 0.88（绝对值，不乘以块级 modifiers），
+    // 当前句强制最亮 = 1.0
+    if (spansByBlock.has(currentBlock) && currentSentence) {
+      spansByBlock.get(currentBlock)!.forEach((span) => {
+        span.style.opacity = span === currentSentence ? "1" : "0.88";
+      });
+    }
   });
 }
 
 function clearAllOpacity(): void {
-  const blocks = document.querySelectorAll(
-    '.protyle-wysiwyg [data-node-id], .protyle-wysiwyg iframe, .protyle-wysiwyg video'
-  );
-  blocks.forEach((block) => {
-    (block as HTMLElement).style.opacity = "";
+  const containers = document.querySelectorAll<HTMLElement>('.protyle-wysiwyg');
+  containers.forEach(container => {
+    removeSentenceSpans(container);
+    const blocks = container.querySelectorAll<HTMLElement>('[data-node-id], iframe, video');
+    blocks.forEach(block => { block.style.opacity = ""; });
   });
 }
 
@@ -160,6 +177,23 @@ function onMouseMove(e: MouseEvent): void {
   //   }
   //   applyRipple();
   // }
+}
+
+/**
+ * v2.3.0：由 typewriter §3.7 块级插入动画结束后调用。
+ * 强制立即重算 ripple opacity（清掉 pendingFrame，让 applyRipple 内的 rAF 跑一次）。
+ * applyRipple 的可选参数 focusBlock 让本函数跳过 getCurrentBlock() 查找，
+ * 块级插入刚结束时 getCursorElement() 可能还未刷新到新块，用参数显式指定。
+ */
+export function recompute(currentBlock: HTMLElement | null): void {
+  if (!currentBlock) return;
+  const container = currentBlock.closest('.protyle-wysiwyg') as HTMLElement | null;
+  if (!container) return;
+  if (pendingFrame !== null) {
+    cancelAnimationFrame(pendingFrame);
+    pendingFrame = null;
+  }
+  applyRipple(currentBlock);
 }
 
 export function initRipple(): void {
@@ -501,12 +535,15 @@ export function wrapTextRange(
  * （Range 没有 style 属性）。改返回包裹当前 cursor text node 的 .zt-sentence-span，
  * Step 5 的 applyRipple 可直接对其设 opacity。
  *
+ * cursorRect 参数用结构化类型 { x, y, height } — DOMRect 和项目内 CursorRect
+ * （getCursorRect()）都满足该 shape，无需调用方做类型转换。
+ *
  * 返回 null：光标所在文本未被任何 .zt-sentence-span 包裹
  * （例如在非目标块、或在 inline 元素内尚未包裹的文本节点上）。
  */
 export function getCurrentSentence(
   container: HTMLElement,
-  cursorRect: DOMRect | null,
+  cursorRect: { x: number; y: number; height: number } | null,
 ): HTMLElement | null {
   let textNode: Text | null = null;
 
@@ -665,11 +702,12 @@ export function depthOf(block: HTMLElement): number {
 }
 
 /**
- * v2.3.0：深度系数 — 每深一层 opacity × (1 - DEPTH_FACTOR)，下限 WEIGHT_MIN。
- * depth=0 → 1.0, depth=1 → 0.95, depth=2 → 0.90, ... 最低 WEIGHT_MIN（0.85）。
+ * 列表深度衰减：每深一层 opacity × (1 - DEPTH_FACTOR)，最低 0.7。
+ * 注意：与 WEIGHT_MIN (0.85) 是不同概念——WEIGHT_MIN 用于视觉权重的 lerp 下限，
+ * 而本函数的 0.7 下限表示深度再深也不至于完全消失。
  */
 export function calculateDepthFactor(depth: number): number {
-  return Math.max(WEIGHT_MIN, 1.0 - depth * DEPTH_FACTOR);
+  return Math.max(0.7, 1.0 - depth * DEPTH_FACTOR);
 }
 
 /**

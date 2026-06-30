@@ -4,6 +4,7 @@ import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
 import * as inputMode from "./inputMode";
 import { isInAllowElements } from "./cursor/boundary";
+import { recompute } from "./ripple";
 
 const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE } = TYPEWRITER_CONFIG;
 
@@ -213,8 +214,7 @@ function checkAndScroll(): void {
       const currentBlock = result.cursorElement?.closest('[data-node-id]') as HTMLElement | null;
       if (currentBlock) {
         setTimeout(() => {
-          // TODO(step-5): call recompute() exported from ripple.ts
-          // Step 5 will wire this so ripple re-splits sentences in newly inserted blocks.
+          recompute(currentBlock);
         }, 300);
       }
     }
