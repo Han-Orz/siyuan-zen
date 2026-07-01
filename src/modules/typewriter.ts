@@ -8,6 +8,87 @@ import { recompute } from "./ripple";
 
 const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE } = TYPEWRITER_CONFIG;
 
+// ===== DEBUG INSTRUMENTATION (TEMPORARY — REMOVE AFTER FIX) =====
+// v2.3.1 测试用：暴露打字机运行时状态到 window.__ztTypewriter，供 DevTools 调试。
+// 默认 enabled = false，对生产零性能影响。
+// Console API（DevTools 输入）：
+//   __ztTypewriter.state()  实时快照（对象，含 cursor/editor/container/…）
+//   __ztTypewriter.on()     开启 console.log 自动输出
+//   __ztTypewriter.off()    关闭自动输出
+//   __ztTypewriter.log()    console.table 打印最近 20 事件
+//   __ztTypewriter.clear()  清空事件 buffer
+// 字段：cursor(CursorRect)/editor({top,bottom,left,right}|null)/container/scrollTop/
+//       scrollHeight/clientHeight/cursorPct/deltaY/isScrolling/pendingScrollEnd/
+//       scrollRafId/comfortZone/shouldPause/events(最近 50 个 {t, type, data})
+// 删除方法：bug 修复确认后，整体删除本 banner 以及 banner 之间的所有调试代码。
+//           Step 2-6 的 update 调用都在本文件中以「DEBUG:」单行注释标记，可全文搜索 "DEBUG:" 定位。
+// ----------------------------------------------------------------
+
+interface __ztDebugEditorRect {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+const __ztDebug = {
+  enabled: false,
+  cursor: null as (ReturnType<typeof getCursorRect> | null),
+  editor: null as __ztDebugEditorRect | null,
+  container: null as HTMLElement | null,
+  cursorPct: 0,
+  deltaY: 0,
+  isScrolling: false,
+  scrollTop: 0,
+  scrollHeight: 0,
+  clientHeight: 0,
+  pendingScrollEnd: 0,
+  scrollRafId: null as number | null,
+  comfortZone: COMFORT_ZONE,
+  shouldPause: { isReadMode: false, isInPopup: false, isInEmbedBlock: false },
+  events: [] as Array<{ t: number; type: string; data?: unknown }>,
+  maxEvents: 50,
+};
+
+// DEBUG 内部：仅暴露给 step() 等模块内函数读取；外部走 window.__ztTypewriter。
+export const typewriteDebug = __ztDebug;
+
+// expose 到 window（DevTools console 用）
+// DEBUG: 测试用 — 调试期保留，bug 修复后随 banner 一起删除。
+if (typeof window !== "undefined") {
+  (window as unknown as { __ztTypewriter: unknown }).__ztTypewriter = {
+    state: () => ({ ...__ztDebug, events: __ztDebug.events.slice() }),
+    on: () => {
+      __ztDebug.enabled = true;
+      console.log("[zt-typewriter] debug ON — call __ztTypewriter.off() to disable");
+    },
+    off: () => {
+      __ztDebug.enabled = false;
+      console.log("[zt-typewriter] debug OFF");
+    },
+    log: () => console.table(__ztDebug.events.slice(-20)),
+    clear: () => {
+      __ztDebug.events = [];
+      console.log("[zt-typewriter] events cleared");
+    },
+  };
+}
+
+// DEBUG helper：事件 buffer 记录 + enabled 时 console.log。
+// 测试用 — bug 修复后随 banner 一起删除。
+function __ztDebugPush(type: string, data?: unknown): void {
+  const ev = { t: Date.now(), type, data };
+  __ztDebug.events.push(ev);
+  if (__ztDebug.events.length > __ztDebug.maxEvents) {
+    __ztDebug.events.shift();
+  }
+  if (__ztDebug.enabled) {
+    console.log("[zt-typewriter]", type, data ?? "");
+  }
+}
+
+// ===== END DEBUG INSTRUMENTATION =====
+
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
 let pendingScrollTarget: HTMLElement | null = null;
@@ -117,10 +198,14 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   const _curve = curve ?? SCROLL_CURVE;
 
   isScrolling = true;
+  // DEBUG: smoothScroll 进入 — 测试用，bug 修复后随 banner 一起删除。
+  __ztDebug.isScrolling = true;
 
   // 续接：同一 target 且动画进行中，从当前 scrollTop 重算 target，避免连续 keystroke 雪崩
   if (pendingScroll !== null && pendingScrollTarget === target) {
     pendingScrollEnd = target.scrollTop + deltaY;
+    // DEBUG: 续接场景 — 测试用，bug 修复后随 banner 一起删除。
+    __ztDebug.pendingScrollEnd = pendingScrollEnd;
     return;
   }
 
@@ -134,6 +219,13 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   const startTime = performance.now();
   const dur = duration ?? durationForDistance(Math.abs(deltaY));
 
+  // DEBUG: smoothScroll 启动日志 — 测试用，bug 修复后随 banner 一起删除。
+  __ztDebugPush("smoothScroll:start", {
+    startScrollTop: startScroll,
+    targetScrollTop: pendingScrollEnd,
+    duration: dur,
+  });
+
   function step() {
     const elapsed = performance.now() - startTime;
     const t = Math.min(elapsed / dur, 1);
@@ -144,16 +236,29 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
         startScroll + (currentEnd - startScroll) * eased,
         maxScroll
     ));
+    // DEBUG: rAF tick — 仅 enabled 时 push，避免事件 buffer 爆炸。测试用，bug 修复后随 banner 删除。
+    __ztDebug.scrollTop = target.scrollTop;
+    if (__ztDebug.enabled) {
+      __ztDebugPush("raf", { progress: t.toFixed(3), scrollTop: target.scrollTop });
+    }
     if (t < 1) {
       pendingScroll = requestAnimationFrame(step);
+      // DEBUG: 跟踪当前 rAF id — 测试用，bug 修复后随 banner 删除。
+      __ztDebug.scrollRafId = pendingScroll;
     } else {
       pendingScroll = null;
       pendingScrollTarget = null;
+      // DEBUG: smoothScroll 结束 — 测试用，bug 修复后随 banner 一起删除。
+      __ztDebug.isScrolling = false;
+      __ztDebug.scrollTop = target.scrollTop;
+      __ztDebugPush("smoothScroll:end", { finalScrollTop: target.scrollTop });
       // 动画结束后 100ms 冷却，防止 concurrent 触发新 scroll
       setTimeout(() => { isScrolling = false; }, 100);
     }
   }
   pendingScroll = requestAnimationFrame(step);
+  // DEBUG: 跟踪初始 rAF id — 测试用，bug 修复后随 banner 删除。
+  __ztDebug.scrollRafId = pendingScroll;
 }
 
 function scheduleCheck(): void {
@@ -198,6 +303,15 @@ function checkAndScroll(): void {
   }
   if (!container) return;
 
+  // DEBUG: snapshot before scroll decision — 测试用，bug 修复后随 banner 一起删除。
+  __ztDebug.cursor = rect;
+  __ztDebug.editor = result.editorRect;
+  __ztDebug.container = container;
+  __ztDebug.scrollTop = container.scrollTop;
+  __ztDebug.scrollHeight = container.scrollHeight;
+  __ztDebug.clientHeight = container.clientHeight;
+  __ztDebug.pendingScrollEnd = pendingScrollEnd;
+
   // 使用 editorRect（protyle-content 的 bounding rect）作为滚动锚点
   // 而非 container.getBoundingClientRect()（可能是更大的祖先元素）
   // 注：AllowResult.editorRect 只有 top/bottom/left/right，无 height 字段（不像 DOMRect）
@@ -216,6 +330,11 @@ function checkAndScroll(): void {
     deltaY = (cursorPct - COMFORT_ZONE[1]) * editorHeight;
   }
   // else: 舒适区内，deltaY = 0，不滚
+
+  // DEBUG: log scroll decision — 测试用，bug 修复后随 banner 一起删除。
+  __ztDebug.cursorPct = cursorPct;
+  __ztDebug.deltaY = deltaY;
+  __ztDebugPush("checkAndScroll", { cursorPct, deltaY, comfortZone: COMFORT_ZONE });
 
   if (Math.abs(deltaY) >= 1) {
     smoothScroll(container, { deltaY });
@@ -329,6 +448,12 @@ export function destroyTypewriter(): void {
   pendingScrollTarget = null;
   pendingScrollEnd = 0;
   isScrolling = false;
+
+  // DEBUG: reset state on destroy — 测试用，bug 修复后随 banner 一起删除。
+  __ztDebug.scrollTop = 0;
+  __ztDebug.pendingScrollEnd = 0;
+  __ztDebug.isScrolling = false;
+  __ztDebug.scrollRafId = null;
 
   if (blockInsertCooldownTimer !== null) {
     clearTimeout(blockInsertCooldownTimer);
