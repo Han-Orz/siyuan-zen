@@ -12,6 +12,7 @@ let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [
 let pendingScroll: number | null = null;
 let pendingScrollTarget: HTMLElement | null = null;
 let pendingScrollEnd: number = 0;
+let isScrolling = false;
 let pendingCheck: number | null = null;
 let cachedContainer: HTMLElement | null = null;
 let cachedCursorElement: Element | null = null;
@@ -115,9 +116,11 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   // 当前 rAF 路径仍使用 easeInOutCubic 作为缓动函数。
   const _curve = curve ?? SCROLL_CURVE;
 
-  // 续接：同一 target 且动画进行中，仅追加 deltaY，动画继续
+  isScrolling = true;
+
+  // 续接：同一 target 且动画进行中，从当前 scrollTop 重算 target，避免连续 keystroke 雪崩
   if (pendingScroll !== null && pendingScrollTarget === target) {
-    pendingScrollEnd += deltaY;
+    pendingScrollEnd = target.scrollTop + deltaY;
     return;
   }
 
@@ -146,6 +149,8 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
     } else {
       pendingScroll = null;
       pendingScrollTarget = null;
+      // 动画结束后 100ms 冷却，防止 concurrent 触发新 scroll
+      setTimeout(() => { isScrolling = false; }, 100);
     }
   }
   pendingScroll = requestAnimationFrame(step);
@@ -165,6 +170,9 @@ function checkAndScroll(): void {
 
   // 暂停场景（悬浮窗 / 只读 / 嵌入块）：不滚动
   if (shouldPauseTypewriter()) return;
+
+  // 动画进行中：不触发新 scroll，防止连续 keystroke 雪崩到 clamp 边界
+  if (isScrolling) return;
 
   const rect = getCursorRect();
   if (!rect) return;
@@ -318,6 +326,7 @@ export function destroyTypewriter(): void {
   cachedCursorElement = null;
   pendingScrollTarget = null;
   pendingScrollEnd = 0;
+  isScrolling = false;
 
   if (blockInsertCooldownTimer !== null) {
     clearTimeout(blockInsertCooldownTimer);
