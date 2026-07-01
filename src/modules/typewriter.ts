@@ -276,10 +276,6 @@ export function initTypewriter(): void {
   // 事件数组使用三元组以便保留 options
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", scheduleCheck],
-    ["keyup", scheduleCheck],
-    ["keydown", scheduleCheck],
-    ["click", scheduleCheck],
-    ["mouseup", scheduleCheck],
     ["resize", scheduleCheck],
     // Enter / Backspace 块变更 → 块级 FLIP 过渡动画
     // capture 阶段：先于 SiYuan bubble handler，在 DOM 变更前快照块位置
