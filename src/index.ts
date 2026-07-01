@@ -53,19 +53,16 @@ export default class ZenType extends Plugin {
     this.addCommand({
       langKey: "toggle-cursor",
       langText: "切换光标",
-      hotkey: "⇧⌘C",
       callback: () => this.toggle("cursor"),
     });
     this.addCommand({
       langKey: "toggle-typewriter",
       langText: "切换打字机",
-      hotkey: "⇧⌘T",
       callback: () => this.toggle("typewriter"),
     });
     this.addCommand({
       langKey: "toggle-ripple",
       langText: "切换涟漪",
-      hotkey: "⇧⌘R",
       callback: () => this.toggle("ripple"),
     });
     this.addCommand({
