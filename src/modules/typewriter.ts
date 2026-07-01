@@ -87,8 +87,10 @@ function __ztDebugPush(type: string, data?: unknown, important = false): void {
   if (__ztDebug.events.length > __ztDebug.maxEvents) {
     __ztDebug.events.shift();
   }
-  // important 事件必 log；普通事件仅 enabled 时 log
-  if (important || __ztDebug.enabled) {
+  // important 事件：log
+  // non-important 事件：仅在 events 数组里累积（state() 可读），不 log
+  // 跟 enabled 状态无关——on() 不应该把噪音灌到 console
+  if (important) {
     console.log("[zt-typewriter]", type, data ?? "");
   }
 }
