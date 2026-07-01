@@ -21,7 +21,9 @@ import mainCss from "./styles/index.scss";
 const STYLE_ID = "main";
 
 const STORAGE_KEY = "zentype-enabled";
-const ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"><defs><filter id="zt-mist"><feGaussianBlur stdDeviation="0.4"/></filter></defs><circle cx="12" cy="12" r="6.5" stroke="currentColor" stroke-width="1.6" filter="url(#zt-mist)"/></svg>`;
+const ICON_OFF = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"><circle cx="12" cy="12" r="6.5" stroke="currentColor" stroke-width="1.6"/></svg>`;
+
+const ICON_ON = `<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="6.5" fill="currentColor" class="zt-breathing"/></svg>`;
 
 export default class ZenType extends Plugin {
   private enabled: ModuleEnabled = {
@@ -32,6 +34,9 @@ export default class ZenType extends Plugin {
 
   // P2: 集中管理 EventBus 退订函数，onunload 时统一释放，避免内存泄漏
   private eventBusOffFns: Array<() => void> = [];
+
+  // v2.3.0：顶栏图标元素引用，供 updateTopBarIcon() 通过 outerHTML 替换图标
+  private topBarItem: HTMLElement | null = null;
 
   async onload(): Promise<void> {
     const saved = await this.loadData(STORAGE_KEY);
@@ -86,14 +91,17 @@ export default class ZenType extends Plugin {
     });
 
     const allOn = this.isAllEnabled();
-    const topBarItem = this.addTopBar({
-      icon: ICON_SVG,
-      title: allOn ? "zenType 已启用" : "zenType 已禁用",
+    this.topBarItem = this.addTopBar({
+      icon: allOn ? ICON_ON : ICON_OFF,
+      title: allOn ? "zenType · 聚焦/打字机：开" : "zenType · 聚焦/打字机：关",
       callback: () => this.toggleAll(),
     });
-    // v2.3.0：给顶栏图标容器加 class 以便 SCSS 应用呼吸动画
-    if (topBarItem) {
-      topBarItem.classList.add("zentype-topbar-icon");
+    // 保留 .zentype-topbar-icon class（兼容潜在外部引用），但不再由它驱动动画
+    // 动画由 SVG 元素上的 .zt-breathing class 控制
+    if (this.topBarItem) {
+      if (allOn) {
+        this.topBarItem.classList.add("zentype-topbar-icon");
+      }
     }
 
     // === P2: EventBus 订阅（替代手动 WS / DOM 事件 / 白名单） ===
@@ -182,7 +190,9 @@ export default class ZenType extends Plugin {
     );
 
     // === 模块初始化（与 P0 / round-3 相同） ===
-    if (this.enabled.cursor) initCursor();
+    // v2.3.0：cursor 始终初始化（光标常开），不再受 STORAGE_KEY 中 cursor 字段影响
+    initCursor();
+    document.body.classList.add("zentype-cursor-active");
     if (this.enabled.typewriter) initTypewriter();
     if (this.enabled.ripple) initRipple();
 
@@ -200,15 +210,40 @@ export default class ZenType extends Plugin {
     destroyRipple();
     inputMode.reset();
     removeStyle(STYLE_ID);
+    document.body.classList.remove("zentype-cursor-active");
+    this.topBarItem = null;
     console.log("zenType v2 unloaded");
+  }
+
+  // v2.3.0：思源 SDK 没有 updateIcon API，通过 outerHTML 替换实现图标切换
+  private updateTopBarIcon(): void {
+    if (!this.topBarItem) return;
+    const allOn = this.isAllEnabled();
+    const svg = this.topBarItem.querySelector("svg");
+    if (svg) {
+      svg.outerHTML = allOn ? ICON_ON : ICON_OFF;
+    }
+    // 同步容器 class 状态（保留对历史引用的兼容）
+    if (allOn) {
+      this.topBarItem.classList.add("zentype-topbar-icon");
+    } else {
+      this.topBarItem.classList.remove("zentype-topbar-icon");
+    }
+    // 同步 title（tooltip）
+    this.topBarItem.setAttribute("title", allOn ? "zenType · 聚焦/打字机：开" : "zenType · 聚焦/打字机：关");
   }
 
   private toggle(name: ModuleName): void {
     this.enabled[name] = !this.enabled[name];
 
     if (name === "cursor") {
-      if (this.enabled.cursor) initCursor();
-      else destroyCursor();
+      if (this.enabled.cursor) {
+        initCursor();
+        document.body.classList.add("zentype-cursor-active");
+      } else {
+        destroyCursor();
+        document.body.classList.remove("zentype-cursor-active");
+      }
     } else if (name === "typewriter") {
       if (this.enabled.typewriter) initTypewriter();
       else destroyTypewriter();
@@ -224,13 +259,7 @@ export default class ZenType extends Plugin {
     const allOn = this.isAllEnabled();
     const newState = !allOn;
 
-    if (newState && !this.enabled.cursor) {
-      this.enabled.cursor = true;
-      initCursor();
-    } else if (!newState && this.enabled.cursor) {
-      this.enabled.cursor = false;
-      destroyCursor();
-    }
+    // v2.3.0：toggleAll 不再 touch cursor（光标常开 spec）
 
     if (newState && !this.enabled.typewriter) {
       this.enabled.typewriter = true;
@@ -249,9 +278,11 @@ export default class ZenType extends Plugin {
     }
 
     this.saveData(STORAGE_KEY, this.enabled);
+    this.updateTopBarIcon();
   }
 
   private isAllEnabled(): boolean {
-    return this.enabled.cursor && this.enabled.typewriter && this.enabled.ripple;
+    // v2.3.0：语义改为"typewriter + ripple 两者都开"，不再 include cursor
+    return this.enabled.typewriter && this.enabled.ripple;
   }
 }
