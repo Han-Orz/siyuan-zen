@@ -6,30 +6,16 @@
  *
  * 算法借鉴 Neo-Plus getselection.ts：
  *   1) 浏览器原生 Range.getClientRects()
- *   2) 空时插入零宽字符（ZWSP \u200B）作为 fallback
+ *   2) 空时用父 [data-node-id] 块的 bounding rect 作为 fallback（非突变）
  *
  * 设计决策：返回精简的 CursorRect 而不是 DOMRect——消费方只需要 x/y/width/height。
  * typewriter.ts / cursor.ts 直接消费，无需额外转换。
  */
 
 import type { CursorRect } from "../types";
+import { CURSOR_CONFIG } from "../config";
 import { getCursorElement } from "./getCursorElement";
 import { getLineHeight } from "./getLineHeight";
-
-/**
- * 全局复用 ZWSP marker —— 避免每次 fallback 新建 DOM 节点（round 3 优化）。
- * 参考 参考/顺滑光标验证版.js:142-149。
- * 用 span 而非 TextNode，因为孤立 TextNode 无法 getBoundingClientRect。
- */
-const globalZWSPMarker = (() => {
-  const span = document.createElement("span");
-  span.textContent = "\u200B";
-  span.style.cssText =
-    "position: absolute; visibility: hidden; pointer-events: none;";
-  return span;
-})();
-
-import { CURSOR_CONFIG } from "../config";
 
 /** 用户可配置：见 src/config.ts :: CURSOR_CONFIG.HEIGHT_RATIO */
 export const LINE_HEIGHT_RATIO = CURSOR_CONFIG.HEIGHT_RATIO;
@@ -51,7 +37,7 @@ export function getCursorRect(): CursorRect | null {
     // 取最后一个 rect（最接近光标位置，兼容多行选择）
     baseRect = rects[rects.length - 1];
   } else {
-    baseRect = getZWSPRect(range);
+    baseRect = getEmptyBlockRect(range);
     if (!baseRect) return null;
   }
 
@@ -67,15 +53,27 @@ export function getCursorRect(): CursorRect | null {
   return { x, y, width: baseRect.width, height };
 }
 
-/** ZWSP 降级：复用模块级 marker（不再每次新建），取完立即移除 */
-function getZWSPRect(range: Range): DOMRect | null {
-  try {
-    range.insertNode(globalZWSPMarker);
-    range.selectNode(globalZWSPMarker);
-    const rect = range.getBoundingClientRect();
-    globalZWSPMarker.remove();
-    return rect;
-  } catch {
-    return null;
+/**
+ * 非突变 fallback：当 Range.getClientRects() 返回 0-height rect（典型场景：
+ * 光标在空块）时，沿 startContainer 向上找 [data-node-id] 块，用块的
+ * bounding rect + lineHeight 构造虚拟光标 rect。
+ *
+ * 不插入 DOM，避免触发 selectionchange 级联（参考 PR 之前的 debug log
+ * spam 226+ 行的根因）。
+ *
+ * @param range 已 collapse(true) 的 Range
+ * @returns DOMRect 或 null（找不到块时）
+ */
+function getEmptyBlockRect(range: Range): DOMRect | null {
+  let node: Node | null = range.startContainer;
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    node = node.parentNode;
   }
+  if (!node) return null;
+  const block = (node as Element).closest('[data-node-id]');
+  if (!block) return null;
+  const blockRect = block.getBoundingClientRect();
+  const lineHeight = getLineHeight(range.startContainer);
+  // 空块光标视为在块顶，占据 lineHeight 高度
+  return new DOMRect(blockRect.left, blockRect.top, 0, lineHeight);
 }

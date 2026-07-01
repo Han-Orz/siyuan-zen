@@ -300,6 +300,19 @@ function checkAndScroll(): void {
   if (!result.editorRect) return;
   if (!result.cursorElement) return;
 
+  // 新增：空块守卫。光标在空块时 typewriter scroll 无意义（块高近 0，cursor
+  // 在块顶），且 getCursorRect 已走非突变 fallback 也无 cursorPct 可言。
+  // 同时这是防御层：即使未来 fallback 路径再次突变 DOM，空块也直接退出。
+  const cursorBlock = result.cursorElement.closest('[data-node-id]');
+  if (cursorBlock) {
+    const text = cursorBlock.textContent?.trim() ?? '';
+    const isEmptyBlock = text === ''
+      && !cursorBlock.querySelector(
+        'img, iframe, [data-type^="NodeMathBlock"], [data-type^="NodeCodeBlock"]',
+      );
+    if (isEmptyBlock) return;
+  }
+
   // 缓存命中：同一 cursorElement 复用上次的 scroll container，避免每次都 DOM 遍历
   let container: HTMLElement | null;
   if (result.cursorElement === cachedCursorElement && cachedContainer) {
