@@ -21,9 +21,10 @@ import mainCss from "./styles/index.scss";
 const STYLE_ID = "main";
 
 const STORAGE_KEY = "zentype-enabled";
-const ICON_OFF = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"><circle cx="12" cy="12" r="6.5" stroke="currentColor" stroke-width="1.6"/></svg>`;
-
-const ICON_ON = `<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="6.5" fill="currentColor" class="zt-breathing"/></svg>`;
+// Single static topbar icon — visual state (off/on) is driven by container class
+// (.zentype-topbar-icon--on / --off) via SCSS descendant selectors; SVG DOM is
+// never replaced post-load so SiYuan's element reference stays stable.
+const ICON = `<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="8" class="zt-topbar-circle"/></svg>`;
 
 export default class ZenType extends Plugin {
   private enabled: ModuleEnabled = {
@@ -35,7 +36,7 @@ export default class ZenType extends Plugin {
   // P2: 集中管理 EventBus 退订函数，onunload 时统一释放，避免内存泄漏
   private eventBusOffFns: Array<() => void> = [];
 
-  // v2.3.0：顶栏图标元素引用，供 updateTopBarIcon() 通过 outerHTML 替换图标
+  // 顶栏图标容器引用，供 updateTopBarIcon() 切换 --on / --off class
   private topBarItem: HTMLElement | null = null;
 
   async onload(): Promise<void> {
@@ -51,18 +52,22 @@ export default class ZenType extends Plugin {
 
     this.addCommand({
       langKey: "toggle-cursor",
+      hotkey: "⇧⌘C",
       callback: () => this.toggle("cursor"),
     });
     this.addCommand({
       langKey: "toggle-typewriter",
+      hotkey: "⇧⌘T",
       callback: () => this.toggle("typewriter"),
     });
     this.addCommand({
       langKey: "toggle-ripple",
+      hotkey: "⇧⌘R",
       callback: () => this.toggle("ripple"),
     });
     this.addCommand({
       langKey: "toggle-all",
+      hotkey: "⌃⌥Z",
       callback: () => this.toggleAll(),
     });
     this.addCommand({
@@ -92,16 +97,15 @@ export default class ZenType extends Plugin {
 
     const allOn = this.isAllEnabled();
     this.topBarItem = this.addTopBar({
-      icon: allOn ? ICON_ON : ICON_OFF,
+      icon: ICON,
       title: allOn ? "zenType · 聚焦/打字机：开" : "zenType · 聚焦/打字机：关",
       callback: () => this.toggleAll(),
     });
-    // 保留 .zentype-topbar-icon class（兼容潜在外部引用），但不再由它驱动动画
-    // 动画由 SVG 元素上的 .zt-breathing class 控制
+    // 容器 class 互斥初始化：off → --off, on → --on
     if (this.topBarItem) {
-      if (allOn) {
-        this.topBarItem.classList.add("zentype-topbar-icon");
-      }
+      this.topBarItem.classList.add(
+        allOn ? "zentype-topbar-icon--on" : "zentype-topbar-icon--off",
+      );
     }
 
     // === P2: EventBus 订阅（替代手动 WS / DOM 事件 / 白名单） ===
@@ -215,22 +219,21 @@ export default class ZenType extends Plugin {
     console.log("zenType v2 unloaded");
   }
 
-  // v2.3.0：思源 SDK 没有 updateIcon API，通过 outerHTML 替换实现图标切换
+  // 方案 γ：容器 class 互斥 toggle + title 更新；永不修改 SVG 内部 DOM
   private updateTopBarIcon(): void {
     if (!this.topBarItem) return;
     const allOn = this.isAllEnabled();
-    const svg = this.topBarItem.querySelector("svg");
-    if (svg) {
-      svg.outerHTML = allOn ? ICON_ON : ICON_OFF;
-    }
-    // 同步容器 class 状态（保留对历史引用的兼容）
     if (allOn) {
-      this.topBarItem.classList.add("zentype-topbar-icon");
+      this.topBarItem.classList.add("zentype-topbar-icon--on");
+      this.topBarItem.classList.remove("zentype-topbar-icon--off");
     } else {
-      this.topBarItem.classList.remove("zentype-topbar-icon");
+      this.topBarItem.classList.add("zentype-topbar-icon--off");
+      this.topBarItem.classList.remove("zentype-topbar-icon--on");
     }
-    // 同步 title（tooltip）
-    this.topBarItem.setAttribute("title", allOn ? "zenType · 聚焦/打字机：开" : "zenType · 聚焦/打字机：关");
+    this.topBarItem.setAttribute(
+      "title",
+      allOn ? "zenType · 聚焦/打字机：开" : "zenType · 聚焦/打字机：关",
+    );
   }
 
   private toggle(name: ModuleName): void {
