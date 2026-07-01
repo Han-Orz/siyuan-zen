@@ -24,7 +24,7 @@ const STORAGE_KEY = "zentype-enabled";
 // Single static topbar icon — visual state (off/on) is driven by container class
 // (.zentype-topbar-icon--on / --off) via SCSS descendant selectors; SVG DOM is
 // never replaced post-load so SiYuan's element reference stays stable.
-const ICON = `<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="8" class="zt-topbar-circle"/></svg>`;
+const ICON = `<svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8" class="zt-topbar-circle"/></svg>`;
 
 export default class ZenType extends Plugin {
   private enabled: ModuleEnabled = {
@@ -52,54 +52,34 @@ export default class ZenType extends Plugin {
 
     this.addCommand({
       langKey: "toggle-cursor",
+      langText: "切换光标",
       hotkey: "⇧⌘C",
       callback: () => this.toggle("cursor"),
     });
     this.addCommand({
       langKey: "toggle-typewriter",
+      langText: "切换打字机",
       hotkey: "⇧⌘T",
       callback: () => this.toggle("typewriter"),
     });
     this.addCommand({
       langKey: "toggle-ripple",
+      langText: "切换涟漪",
       hotkey: "⇧⌘R",
       callback: () => this.toggle("ripple"),
     });
     this.addCommand({
-      langKey: "toggle-all",
+      langKey: "toggle-type",
+      langText: "切换联合（打字机+涟漪）",
       hotkey: "⌃⌥Z",
-      callback: () => this.toggleAll(),
-    });
-    this.addCommand({
-      langKey: "enable-focus-mode",
-      callback: () => {
-        inputMode.simulateFocusInput();
-      },
-    });
-    this.addCommand({
-      langKey: "enable-typewriter-mode",
-      callback: () => {
-        inputMode.simulateTypewriterInput();
-      },
-    });
-    this.addCommand({
-      langKey: "disable-focus-mode",
-      callback: () => {
-        inputMode.disableFocus();
-      },
-    });
-    this.addCommand({
-      langKey: "disable-typewriter-mode",
-      callback: () => {
-        inputMode.disableTypewriter();
-      },
+      callback: () => this.toggleType(),
     });
 
     const allOn = this.isAllEnabled();
     this.topBarItem = this.addTopBar({
       icon: ICON,
       title: allOn ? "zenType · 聚焦/打字机：开" : "zenType · 聚焦/打字机：关",
-      callback: () => this.toggleAll(),
+      callback: () => this.toggleType(),
     });
     // 容器 class 互斥初始化：off → --off, on → --on
     if (this.topBarItem) {
@@ -219,7 +199,7 @@ export default class ZenType extends Plugin {
     console.log("zenType v2 unloaded");
   }
 
-  // 方案 γ：容器 class 互斥 toggle + title 更新；永不修改 SVG 内部 DOM
+  // 方案 γ：容器 class 互斥 toggle + aria-label 更新；永不修改 SVG 内部 DOM
   private updateTopBarIcon(): void {
     if (!this.topBarItem) return;
     const allOn = this.isAllEnabled();
@@ -231,7 +211,7 @@ export default class ZenType extends Plugin {
       this.topBarItem.classList.remove("zentype-topbar-icon--on");
     }
     this.topBarItem.setAttribute(
-      "title",
+      "aria-label",
       allOn ? "zenType · 聚焦/打字机：开" : "zenType · 聚焦/打字机：关",
     );
   }
@@ -256,13 +236,14 @@ export default class ZenType extends Plugin {
     }
 
     this.saveData(STORAGE_KEY, this.enabled);
+    this.updateTopBarIcon();
   }
 
-  private toggleAll(): void {
+  private toggleType(): void {
     const allOn = this.isAllEnabled();
     const newState = !allOn;
 
-    // v2.3.0：toggleAll 不再 touch cursor（光标常开 spec）
+    // v2.3.0：toggleType 不再 touch cursor（光标常开 spec）
 
     if (newState && !this.enabled.typewriter) {
       this.enabled.typewriter = true;
