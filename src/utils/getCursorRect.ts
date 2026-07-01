@@ -72,8 +72,17 @@ function getEmptyBlockRect(range: Range): DOMRect | null {
   if (!node) return null;
   const block = (node as Element).closest('[data-node-id]');
   if (!block) return null;
-  const blockRect = block.getBoundingClientRect();
+
+  // Walk up from startContainer to the direct child of [data-node-id].
+  // The direct child's rect reflects the content-area position (accounting for
+  // padding / inner containers), not the block's outer edge which may be offset.
+  let contentEl: Element = node as Element;
+  while (contentEl.parentElement && contentEl.parentElement !== block) {
+    contentEl = contentEl.parentElement;
+  }
+
+  const rect = contentEl.getBoundingClientRect();
   const lineHeight = getLineHeight(range.startContainer);
-  // 空块光标视为在块顶，占据 lineHeight 高度
-  return new DOMRect(blockRect.left, blockRect.top, 0, lineHeight);
+  // 空块光标视为在内容区顶部，占据 lineHeight 高度
+  return new DOMRect(rect.left, rect.top, 0, lineHeight);
 }

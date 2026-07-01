@@ -3,99 +3,12 @@ import { findClosestScrollableElement } from "../utils/scroll";
 import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
 import * as inputMode from "./inputMode";
-import { isInAllowElements } from "./cursor/boundary";
-import { recompute } from "./ripple";
+import { isInAllowElements } from "../utils/boundary";
+import { Debug } from "../utils/debug";
 
 const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE } = TYPEWRITER_CONFIG;
 
-// ===== DEBUG INSTRUMENTATION (TEMPORARY — REMOVE AFTER FIX) =====
-// v2.3.1 测试用：暴露打字机运行时状态到 window.__ztTypewriter，供 DevTools 调试。
-// 默认 enabled = false，对生产零性能影响。
-// Console API（DevTools 输入）：
-//   __ztTypewriter.state()  实时快照（对象，含 cursor/editor/container/…）
-//   __ztTypewriter.on()     开启 console.log 自动输出
-//   __ztTypewriter.off()    关闭自动输出
-//   __ztTypewriter.log()    console.table 打印最近 20 事件
-//   __ztTypewriter.clear()  清空事件 buffer
-// 字段：cursor(CursorRect)/editor({top,bottom,left,right}|null)/container/scrollTop/
-//       scrollHeight/clientHeight/cursorPct/deltaY/isScrolling/pendingScrollEnd/
-//       scrollRafId/comfortZone/shouldPause/events(最近 50 个 {t, type, data})
-// 删除方法：bug 修复确认后，整体删除本 banner 以及 banner 之间的所有调试代码。
-//           Step 2-6 的 update 调用都在本文件中以「DEBUG:」单行注释标记，可全文搜索 "DEBUG:" 定位。
-// ----------------------------------------------------------------
-
-interface __ztDebugEditorRect {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-}
-
-const __ztDebug = {
-  enabled: false,
-  cursor: null as (ReturnType<typeof getCursorRect> | null),
-  editor: null as __ztDebugEditorRect | null,
-  container: null as HTMLElement | null,
-  cursorPct: 0,
-  deltaY: 0,
-  isScrolling: false,
-  scrollTop: 0,
-  scrollHeight: 0,
-  clientHeight: 0,
-  pendingScrollEnd: 0,
-  scrollRafId: null as number | null,
-  comfortZone: COMFORT_ZONE,
-  shouldPause: { isReadMode: false, isInPopup: false, isInEmbedBlock: false },
-  events: [] as Array<{ t: number; type: string; data?: unknown }>,
-  maxEvents: 50,
-};
-
-// DEBUG 内部：仅暴露给 step() 等模块内函数读取；外部走 window.__ztTypewriter。
-export const typewriteDebug = __ztDebug;
-
-// expose 到 window（DevTools console 用）
-// DEBUG: 测试用 — 调试期保留，bug 修复后随 banner 一起删除。
-if (typeof window !== "undefined") {
-  (window as unknown as { __ztTypewriter: unknown }).__ztTypewriter = {
-    state: () => ({ ...__ztDebug, events: __ztDebug.events.slice() }),
-    on: () => {
-      __ztDebug.enabled = true;
-      console.log("[zt-typewriter] debug ON — call __ztTypewriter.off() to disable");
-    },
-    off: () => {
-      __ztDebug.enabled = false;
-      console.log("[zt-typewriter] debug OFF");
-    },
-    log: () => console.table(__ztDebug.events.slice(-20)),
-    clear: () => {
-      __ztDebug.events = [];
-      console.log("[zt-typewriter] events cleared");
-    },
-  };
-}
-
-// DEBUG helper：事件 buffer 记录 + enabled 时 console.log。
-// important = true 时无视 enabled 状态必 push + log（关键事件必捕获）；
-// important = false 时仅 enabled 状态下记录（避免 disabled 时 buffer 被噪音灌满）。
-// 测试用 — bug 修复后随 banner 一起删除。
-function __ztDebugPush(type: string, data?: unknown, important = false): void {
-  // 非重要事件 + debug 关闭 → 完全跳过（不入 events、不 log），生产零开销
-  if (!important && !__ztDebug.enabled) return;
-
-  const ev = { t: Date.now(), type, data };
-  __ztDebug.events.push(ev);
-  if (__ztDebug.events.length > __ztDebug.maxEvents) {
-    __ztDebug.events.shift();
-  }
-  // important 事件：log
-  // non-important 事件：仅在 events 数组里累积（state() 可读），不 log
-  // 跟 enabled 状态无关——on() 不应该把噪音灌到 console
-  if (important) {
-    console.log("[zt-typewriter]", type, data ?? "");
-  }
-}
-
-// ===== END DEBUG INSTRUMENTATION =====
+const dbg = Debug.namespace("typewriter");
 
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
@@ -105,85 +18,68 @@ let isScrolling = false;
 let pendingCheck: number | null = null;
 let cachedContainer: HTMLElement | null = null;
 let cachedCursorElement: Element | null = null;
+let lastCheckRect: { x: number; y: number; width: number; height: number } | null = null;
 
-// v2.3.0 block insertion: FLIP animation state
-let pendingBlockInsert = false;
-let blockInsertCooldownTimer: ReturnType<typeof setTimeout> | null = null;
-let lastBlockInsertTime = 0;
-
-/**
- * 标记块级插入已发生（Enter / Backspace / paste 多行）。
- * 调用后 300ms 内 typewriter 主循环跳过 transition 关闭，
- * 覆盖 FLIP + smoothScroll 总时长。
- */
-function markBlockInsertPending(): void {
-  pendingBlockInsert = true;
-  if (blockInsertCooldownTimer !== null) clearTimeout(blockInsertCooldownTimer);
-  blockInsertCooldownTimer = setTimeout(() => {
-    pendingBlockInsert = false;
-    blockInsertCooldownTimer = null;
-  }, 300);
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
 }
 
 /**
- * FLIP 动画：让块级插入后的"下方块被推下去"视觉上平滑过渡。
- * First: 快照所有块位置 → Invert: 反推到旧位置 → Play: 取消 transform 平滑过渡。
+ * 精简 FLIP 动画：Enter / Backspace 块变更后，下方块平滑过渡回原位。
  *
- * 位移幅度 = 块实际被推的距离（编辑器原生 reflow delta），不做 opacity。
+ * 三阶段批量执行：
+ *   Phase 1 (Invert): 所有块一次性写完 transform+transition:none，不读 offsetHeight
+ *   Phase 2 (Commit):  读 editor.offsetHeight 一次，唯一 layout — 所有 Invert 一起生效
+ *   Phase 3 (Play):    一个 rAF 统一启动所有 transition，一个 setTimeout 集中清理
+ *
+ * 对比旧版：不逐元素 reflow、不逐元素内层 rAF → 无中间帧残影，定时器从 N×2 降到 2。
  */
-function animateNaturalReflow(
-  editor: HTMLElement,
-  preSnapshot?: Map<HTMLElement, number>,
-): void {
-  const now = performance.now();
-  // 跳过条件：距离上次块级变化 < 100ms（连续 Enter / 快速 paste）
-  if (now - lastBlockInsertTime < 100) return;
-  lastBlockInsertTime = now;
+function animateBlockShift(editor: HTMLElement): void {
+  // First: 捕获阶段同步快照所有块的旧位置（在 Enter 的 capture handler 中调用，
+  // 此时 SiYuan bubble handler 尚未改 DOM）
+  const first = new Map<HTMLElement, number>();
+  editor.querySelectorAll<HTMLElement>('[data-node-id]').forEach(el => {
+    first.set(el, el.getBoundingClientRect().top);
+  });
 
-  // First：快照所有块位置。preSnapshot 来自 capture 阶段调用方同步采集（DOM 变更前的旧位置），
-  // 未提供时回退到此处的 rAF 入口快照（paste 场景仍走此路径）。
-  const first = preSnapshot ?? (() => {
-    const m = new Map<HTMLElement, number>();
-    editor.querySelectorAll<HTMLElement>('[data-node-id]').forEach(el => {
-      m.set(el, el.getBoundingClientRect().top);
-    });
-    return m;
-  })();
-
-  // 让浏览器重新布局（此时 DOM 已变），下一帧读新位置
+  // 等一帧让 SiYuan 完成 DOM 变更
   requestAnimationFrame(() => {
-    for (const [el, y0] of first) {
-      const y1 = el.getBoundingClientRect().top;
-      const delta = y0 - y1; // 正 = 被推下去
-      if (Math.abs(delta) < 2) continue; // 微动跳过
+    const modifiedElements: HTMLElement[] = [];
 
-      // Invert：推到旧位置
+    // Phase 1 (Invert): 批量写
+    for (const [el, y0] of first) {
+      if (!el.isConnected) continue;
+      const y1 = el.getBoundingClientRect().top;
+      const delta = y0 - y1;
+      if (Math.abs(delta) < 2) continue;
+
       el.style.transform = `translateY(${delta}px)`;
       el.style.transition = 'none';
+      modifiedElements.push(el);
+    }
 
-      // 强制 reflow（让 Invert 立即生效）
-      void el.offsetHeight;
+    if (modifiedElements.length === 0) return;
 
-      // Play：平滑过渡回原位
-      requestAnimationFrame(() => {
+    // Phase 2 (Commit): 唯一一次 layout
+    void editor.offsetHeight;
+
+    // Phase 3 (Play): 一个 rAF 统一启动
+    requestAnimationFrame(() => {
+      for (const el of modifiedElements) {
         el.style.transition = `transform 250ms ${SCROLL_CURVE}`;
         el.style.transform = '';
-        // 动画结束后清理 inline style
-        setTimeout(() => {
+      }
+      setTimeout(() => {
+        modifiedElements.forEach(el => {
+          el.style.transform = '';
           el.style.transition = '';
-        }, 300);
-      });
-    }
+        });
+      }, 300);
+    });
   });
 }
 
-function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
-
 function durationForDistance(dist: number): number {
-  // 从 config 查表（SCROLL_DURATION_TIERS: [120, 180, 260, 360, 500]）
-  // 分档阈值与旧版一致：[0-20)→120, [20-60)→180, [60-150)→260, [150-400)→360, [400+∞)→500
   if (dist < 20) return SCROLL_DURATION_TIERS[0];
   if (dist < 60) return SCROLL_DURATION_TIERS[1];
   if (dist < 150) return SCROLL_DURATION_TIERS[2];
@@ -193,31 +89,21 @@ function durationForDistance(dist: number): number {
 
 interface SmoothScrollOptions {
   deltaY: number;
-  /** 覆盖 config 分档（可选）。 */
   duration?: number;
-  /** 覆盖 SCROLL_CURVE（可选，用于 FLIP 等特殊场景）。当前 rAF 路径暂未接入。 */
-  curve?: string;
 }
 
 function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
-  const { deltaY, duration, curve } = options;
-  // curve 暂存以备未来 CSS scroll-behavior 或 animateNaturalReflow 使用；
-  // 当前 rAF 路径仍使用 easeInOutCubic 作为缓动函数。
-  const _curve = curve ?? SCROLL_CURVE;
+  const { deltaY, duration } = options;
 
   isScrolling = true;
-  // DEBUG: smoothScroll 进入 — 测试用，bug 修复后随 banner 一起删除。
-  __ztDebug.isScrolling = true;
+  dbg.setField("isScrolling", true);
 
-  // 续接：同一 target 且动画进行中，从当前 scrollTop 重算 target，避免连续 keystroke 雪崩
   if (pendingScroll !== null && pendingScrollTarget === target) {
     pendingScrollEnd = target.scrollTop + deltaY;
-    // DEBUG: 续接场景 — 测试用，bug 修复后随 banner 一起删除。
-    __ztDebug.pendingScrollEnd = pendingScrollEnd;
+    dbg.setField("pendingScrollEnd", pendingScrollEnd);
     return;
   }
 
-  // 否则取消旧动画（新 target 或旧动画完成）
   if (pendingScroll !== null) cancelAnimationFrame(pendingScroll);
 
   pendingScrollTarget = target;
@@ -227,8 +113,7 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   const startTime = performance.now();
   const dur = duration ?? durationForDistance(Math.abs(deltaY));
 
-  // DEBUG: smoothScroll 启动日志 — 测试用，bug 修复后随 banner 一起删除。
-  __ztDebugPush("smoothScroll:start", {
+  dbg.push("smoothScroll:start", {
     startScrollTop: startScroll,
     targetScrollTop: pendingScrollEnd,
     duration: dur,
@@ -237,36 +122,31 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   function step() {
     const elapsed = performance.now() - startTime;
     const t = Math.min(elapsed / dur, 1);
-    const eased = easeInOutCubic(t);
+    const eased = easeOutCubic(t);
     const maxScroll = target.scrollHeight - target.clientHeight;
-    const currentEnd = pendingScrollEnd; // read latest
+    const currentEnd = pendingScrollEnd;
     target.scrollTop = Math.max(0, Math.min(
         startScroll + (currentEnd - startScroll) * eased,
         maxScroll
     ));
-    // DEBUG: rAF tick — 仅 enabled 时 push，避免事件 buffer 爆炸。测试用，bug 修复后随 banner 删除。
-    __ztDebug.scrollTop = target.scrollTop;
-    if (__ztDebug.enabled) {
-      __ztDebugPush("raf", { progress: t.toFixed(3), scrollTop: target.scrollTop });
+    dbg.setField("scrollTop", target.scrollTop);
+    if (dbg.isEnabled()) {
+      dbg.push("raf", { progress: t.toFixed(3), scrollTop: target.scrollTop });
     }
     if (t < 1) {
       pendingScroll = requestAnimationFrame(step);
-      // DEBUG: 跟踪当前 rAF id — 测试用，bug 修复后随 banner 删除。
-      __ztDebug.scrollRafId = pendingScroll;
+      dbg.setField("scrollRafId", pendingScroll);
     } else {
       pendingScroll = null;
       pendingScrollTarget = null;
-      // DEBUG: smoothScroll 结束 — 测试用，bug 修复后随 banner 一起删除。
-      __ztDebug.isScrolling = false;
-      __ztDebug.scrollTop = target.scrollTop;
-      __ztDebugPush("smoothScroll:end", { finalScrollTop: target.scrollTop });
-      // 动画结束后 100ms 冷却，防止 concurrent 触发新 scroll
+      dbg.setField("isScrolling", false);
+      dbg.setField("scrollTop", target.scrollTop);
+      dbg.push("smoothScroll:end", { finalScrollTop: target.scrollTop });
       setTimeout(() => { isScrolling = false; }, 100);
     }
   }
   pendingScroll = requestAnimationFrame(step);
-  // DEBUG: 跟踪初始 rAF id — 测试用，bug 修复后随 banner 删除。
-  __ztDebug.scrollRafId = pendingScroll;
+  dbg.setField("scrollRafId", pendingScroll);
 }
 
 function scheduleCheck(): void {
@@ -289,6 +169,28 @@ function checkAndScroll(): void {
 
   const rect = getCursorRect();
   if (!rect) return;
+
+  // 光标未移动则跳过：浏览器可能在 caret blink / IME 更新时反复触发
+  // selectionchange，但 getClientRects 返回的 viewport 坐标不变。
+  // 避免无意义的 DOM 遍历 + debug 噪声。
+  const prevY = lastCheckRect?.y;
+  if (
+    lastCheckRect &&
+    Math.abs(rect.x - lastCheckRect.x) < 1 &&
+    Math.abs(rect.y - lastCheckRect.y) < 1 &&
+    Math.abs(rect.width - lastCheckRect.width) < 1 &&
+    Math.abs(rect.height - lastCheckRect.height) < 1
+  ) {
+    return;
+  }
+  lastCheckRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+
+  // 光标垂直跳跃（>3px）→ 块插入/删除后 SiYuan 布局未收敛，"弹跳"到错误位置
+  // 再纠正回来。推迟一帧等布局稳定。正常打字（同行 x 变 y 不变）不触发。
+  if (prevY !== undefined && Math.abs(rect.y - prevY) > 3) {
+    requestAnimationFrame(() => checkAndScroll());
+    return;
+  }
 
   // 使用 isInAllowElements 复用 cursor 模块验证过的选择器逻辑
   // 内部使用 cursorElement.closest(".protyle:not(.fn__none) .protyle-content")
@@ -324,14 +226,13 @@ function checkAndScroll(): void {
   }
   if (!container) return;
 
-  // DEBUG: snapshot before scroll decision — 测试用，bug 修复后随 banner 一起删除。
-  __ztDebug.cursor = rect;
-  __ztDebug.editor = result.editorRect;
-  __ztDebug.container = container;
-  __ztDebug.scrollTop = container.scrollTop;
-  __ztDebug.scrollHeight = container.scrollHeight;
-  __ztDebug.clientHeight = container.clientHeight;
-  __ztDebug.pendingScrollEnd = pendingScrollEnd;
+  dbg.setField("cursor", rect);
+  dbg.setField("editor", result.editorRect);
+  dbg.setField("container", container);
+  dbg.setField("scrollTop", container.scrollTop);
+  dbg.setField("scrollHeight", container.scrollHeight);
+  dbg.setField("clientHeight", container.clientHeight);
+  dbg.setField("pendingScrollEnd", pendingScrollEnd);
 
   // 使用 editorRect（protyle-content 的 bounding rect）作为滚动锚点
   // 而非 container.getBoundingClientRect()（可能是更大的祖先元素）
@@ -352,16 +253,15 @@ function checkAndScroll(): void {
   }
   // else: 舒适区内，deltaY = 0，不滚
 
-  // DEBUG: log scroll decision — 测试用，bug 修复后随 banner 一起删除。
-  __ztDebug.cursorPct = cursorPct;
-  __ztDebug.deltaY = deltaY;
+  dbg.setField("cursorPct", cursorPct);
+  dbg.setField("deltaY", deltaY);
   // 全量记录：保留完整 cursorPct/deltaY 历史，state() 快照可读
-  __ztDebugPush("checkAndScroll", { cursorPct, deltaY, comfortZone: COMFORT_ZONE });
+  dbg.push("checkAndScroll", { cursorPct, deltaY, comfortZone: COMFORT_ZONE });
 
   // 仅重要事件 push 到 events + console：光标偏离舒适区且 deltaY 非零
   // （即真正触发 scroll 的时刻），过滤掉舒适区内 deltaY=0 的循环噪音
   const isOutsideComfortZone = cursorPct < COMFORT_ZONE[0] || cursorPct > COMFORT_ZONE[1];
-  __ztDebugPush(
+  dbg.push(
     "checkAndScroll:important",
     { cursorPct, deltaY },
     isOutsideComfortZone && deltaY !== 0,
@@ -369,15 +269,6 @@ function checkAndScroll(): void {
 
   if (Math.abs(deltaY) >= 1) {
     smoothScroll(container, { deltaY });
-    // v2.3.0：块级插入后 300ms 让 ripple 重算（Step 5 接 recompute 导出）
-    if (pendingBlockInsert) {
-      const currentBlock = result.cursorElement?.closest('[data-node-id]') as HTMLElement | null;
-      if (currentBlock) {
-        setTimeout(() => {
-          recompute(currentBlock);
-        }, 300);
-      }
-    }
   }
 }
 
@@ -390,61 +281,21 @@ export function initTypewriter(): void {
     ["click", scheduleCheck],
     ["mouseup", scheduleCheck],
     ["resize", scheduleCheck],
-    // v2.3.0：块级插入动画（Enter / 行首 Backspace）
-    // capture 阶段：先于 SiYuan 自身的 keydown 监听；包 rAF 等 DOM 更新完
+    // Enter / Backspace 块变更 → 块级 FLIP 过渡动画
+    // capture 阶段：先于 SiYuan bubble handler，在 DOM 变更前快照块位置
     [
       "keydown",
       (e) => {
         const ke = e as KeyboardEvent;
+        if (ke.key !== "Enter" && ke.key !== "Backspace") return;
         const sel = window.getSelection();
         if (!sel || !sel.rangeCount) return;
-
-        // 提前取出当前编辑器（capture 阶段，先于 SiYuan 自身 keydown 改 DOM）
-        const cursor = sel.anchorNode?.parentElement?.closest(
+        const editor = sel.anchorNode?.parentElement?.closest(
           ".protyle-wysiwyg",
         ) as HTMLElement | null;
-        if (!cursor) return;
-
-        if (ke.key === "Enter") {
-          // Enter 在行尾或行中 → 创建新块
-          // 同步快照：当前在 capture 阶段，SiYuan bubble handler 尚未改 DOM，preSnapshot 是"旧位置"
-          const preSnapshot = new Map<HTMLElement, number>();
-          cursor.querySelectorAll<HTMLElement>('[data-node-id]').forEach(el => {
-            preSnapshot.set(el, el.getBoundingClientRect().top);
-          });
-          markBlockInsertPending();
-          // 延迟一帧等 DOM 更新
-          requestAnimationFrame(() => animateNaturalReflow(cursor, preSnapshot));
-        } else if (ke.key === "Backspace") {
-          // Backspace 在行首 → 合并到上一块
-          const range = sel.getRangeAt(0);
-          if (range.collapsed && range.startOffset === 0) {
-            // 同步快照（同 Enter 分支）
-            const preSnapshot = new Map<HTMLElement, number>();
-            cursor.querySelectorAll<HTMLElement>('[data-node-id]').forEach(el => {
-              preSnapshot.set(el, el.getBoundingClientRect().top);
-            });
-            markBlockInsertPending();
-            requestAnimationFrame(() => animateNaturalReflow(cursor, preSnapshot));
-          }
-        }
+        if (editor) animateBlockShift(editor);
       },
       { capture: true },
-    ],
-    // v2.3.0：多行粘贴 → FLIP 补位
-    [
-      "paste",
-      () => {
-        markBlockInsertPending();
-        // 延迟一帧等粘贴内容进 DOM
-        requestAnimationFrame(() => {
-          const sel = window.getSelection();
-          const editor = sel?.anchorNode?.parentElement?.closest(
-            ".protyle-wysiwyg",
-          ) as HTMLElement | null;
-          if (editor) animateNaturalReflow(editor);
-        });
-      },
     ],
   ];
 
@@ -476,18 +327,10 @@ export function destroyTypewriter(): void {
   }
   cachedContainer = null;
   cachedCursorElement = null;
+  lastCheckRect = null;
   pendingScrollTarget = null;
   pendingScrollEnd = 0;
   isScrolling = false;
 
-  // DEBUG: reset state on destroy — 测试用，bug 修复后随 banner 一起删除。
-  __ztDebug.scrollTop = 0;
-  __ztDebug.pendingScrollEnd = 0;
-  __ztDebug.isScrolling = false;
-  __ztDebug.scrollRafId = null;
-
-  if (blockInsertCooldownTimer !== null) {
-    clearTimeout(blockInsertCooldownTimer);
-    blockInsertCooldownTimer = null;
-  }
+  dbg.clearFields();
 }

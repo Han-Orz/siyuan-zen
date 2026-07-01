@@ -51,11 +51,6 @@ export default class ZenType extends Plugin {
     addStyle(STYLE_ID, mainCss);
 
     this.addCommand({
-      langKey: "toggle-cursor",
-      langText: "切换光标",
-      callback: () => this.toggle("cursor"),
-    });
-    this.addCommand({
       langKey: "toggle-typewriter",
       langText: "切换打字机",
       callback: () => this.toggle("typewriter"),
@@ -85,7 +80,7 @@ export default class ZenType extends Plugin {
       );
     }
 
-    // === P2: EventBus 订阅（替代手动 WS / DOM 事件 / 白名单） ===
+    // === EventBus 订阅 ===
     // 所有 8 个事件都按 (on, off) 配对记录到 eventBusOffFns，onunload 时统一释放
     const { eventBus } = this;
 
@@ -177,7 +172,7 @@ export default class ZenType extends Plugin {
     if (this.enabled.typewriter) initTypewriter();
     if (this.enabled.ripple) initRipple();
 
-    console.log("zenType v2 loaded (P2 with EventBus)");
+    console.log("zenType loaded");
   }
 
   onunload(): void {
@@ -193,7 +188,7 @@ export default class ZenType extends Plugin {
     removeStyle(STYLE_ID);
     document.body.classList.remove("zentype-cursor-active");
     this.topBarItem = null;
-    console.log("zenType v2 unloaded");
+    console.log("zenType unloaded");
   }
 
   // 方案 γ：容器 class 互斥 toggle + aria-label 更新；永不修改 SVG 内部 DOM
@@ -216,15 +211,7 @@ export default class ZenType extends Plugin {
   private toggle(name: ModuleName): void {
     this.enabled[name] = !this.enabled[name];
 
-    if (name === "cursor") {
-      if (this.enabled.cursor) {
-        initCursor();
-        document.body.classList.add("zentype-cursor-active");
-      } else {
-        destroyCursor();
-        document.body.classList.remove("zentype-cursor-active");
-      }
-    } else if (name === "typewriter") {
+    if (name === "typewriter") {
       if (this.enabled.typewriter) initTypewriter();
       else destroyTypewriter();
     } else if (name === "ripple") {

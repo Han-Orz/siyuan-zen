@@ -21,13 +21,13 @@ export function isReadMode(): boolean {
     // 所以检查光标实际所在的元素，不是外层容器。
     return (cursor as HTMLElement).isContentEditable !== true;
   }
-  // fallback：无光标时检查活跃编辑器根
+  // fallback：无光标时检查活跃编辑器内是否有 contenteditable 元素
   const activeEditor = getActiveEditor();
   if (!activeEditor) return true;
-  const contentEl = activeEditor.protyle.element.querySelector(
-    ".protyle-content",
-  ) as HTMLElement | null;
-  return !contentEl;
+  const editable = activeEditor.protyle.element.querySelector(
+    '[contenteditable="true"]',
+  );
+  return !editable;
 }
 
 /** 悬浮窗（block__popover）处于打开状态 */
@@ -44,13 +44,18 @@ export function isInEmbedBlock(): boolean {
   );
 }
 
+/** 两个暂停函数共用的基础条件。 */
+function shouldPauseCommon(): boolean {
+  return isInPopup();
+}
+
 /**
  * 聚焦 + 打字机需要暂停的场景。
  * 包含：选中多行、悬浮窗编辑。
  */
 export function shouldPauseFocusAndTypewriter(): boolean {
   if (hasSelection()) return true;
-  if (isInPopup()) return true;
+  if (shouldPauseCommon()) return true;
   return false;
 }
 
@@ -59,7 +64,7 @@ export function shouldPauseFocusAndTypewriter(): boolean {
  * 包含：悬浮窗、只读、嵌入块。
  */
 export function shouldPauseTypewriter(): boolean {
-  if (isInPopup()) return true;
+  if (shouldPauseCommon()) return true;
   if (isReadMode()) return true;
   if (isInEmbedBlock()) return true;
   return false;

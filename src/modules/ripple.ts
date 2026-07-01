@@ -1,6 +1,6 @@
 import { getCursorElement } from "../utils/getCursorElement";
 import { getCursorRect } from "../utils/getCursorRect";
-import { shouldPauseFocusAndTypewriter, isReadMode } from "../utils/edgeCases";
+import { shouldPauseFocusAndTypewriter } from "../utils/edgeCases";
 import type { RippleMode } from "../types";
 import { RIPPLE_CONFIG } from "../config";
 import * as inputMode from "./inputMode";
@@ -24,41 +24,30 @@ const {
   EMBED_MULTIPLIER,
   DEPTH_FACTOR,
   WEIGHT_MIN,
-  MOUSE_THROTTLE,
-  IDLE_THRESHOLD,
 } = RIPPLE_CONFIG;
-const SCROLLBAR_MARGIN = 20; // px
 
 let mode: RippleMode = "text";
-let lastTextCursorChange = 0;
-let lastMouseBlock: Element | null = null;
-let lastTextBlock: Element | null = null;
+let active = false;
 let pendingFrame: number | null = null;
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
-let lastMouseMove = 0;
+const modifiedBlocks = new Set<HTMLElement>();
 
 function getCurrentBlock(): Element | null {
   // 鼠标聚焦模式已停用（用户暂未决定此功能该出现在什么场景）。
   // 保留 RippleMode union 中的 "mouse" 以便未来恢复时不破坏类型契约。
-  // if (mode === "mouse" && lastMouseBlock) return lastMouseBlock;
   const cursor = getCursorElement();
   return cursor?.closest("[data-node-id]") ?? null;
 }
 
-function calculateBlockDistance(from: Element, to: Element): number {
-  const fromParent = from.parentElement;
-  if (!fromParent) return 0;
-  const siblings = Array.from(fromParent.children);
-  const fromIndex = siblings.indexOf(from);
-  const toIndex = siblings.indexOf(to);
+function calculateBlockDistance(
+  from: Element,
+  to: Element,
+  indexMap: Map<Element, number>,
+  fromIndex: number,
+): number {
+  const toIndex = indexMap.get(to);
+  if (toIndex === undefined) return fromIndex + 1; // non-sibling fallback (preserves old behavior)
   return Math.abs(fromIndex - toIndex);
-}
-
-function isOverScrollbar(e: MouseEvent): boolean {
-  // 简化判断：检测视口边缘（20px 缓冲带）
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  return e.clientX > w - SCROLLBAR_MARGIN || e.clientY > h - SCROLLBAR_MARGIN;
 }
 
 function applyRipple(focusBlock?: HTMLElement | null): void {
@@ -92,10 +81,19 @@ function applyRipple(focusBlock?: HTMLElement | null): void {
     // v2.3.0：块级 opacity — 所有 ripple 目标块（标题/列表/引用等），
     // 距离越远 baseLevel 越低；嵌入块再 × EMBED_MULTIPLIER。
     // 不可读块（code/AV/math/superblock 等）由 isRippleTargetBlock 过滤。
+    const currentParent = currentBlock.parentElement;
+    const indexMap = new Map<Element, number>();
+    let fromIndex = 0;
+    if (currentParent) {
+      Array.from(currentParent.children).forEach((el, i) => {
+        indexMap.set(el, i);
+        if (el === currentBlock) fromIndex = i;
+      });
+    }
     const allBlocks = container.querySelectorAll<HTMLElement>('[data-node-id], iframe, video');
     allBlocks.forEach((block) => {
       if (!isRippleTargetBlock(block)) return;
-      const distance = calculateBlockDistance(currentBlock, block);
+      const distance = calculateBlockDistance(currentBlock, block, indexMap, fromIndex);
       const baseLevel = SENTENCE_LEVELS[Math.min(distance, SENTENCE_LEVELS.length - 1)];
       const weight = visualWeightOf(block);
       const depthFactor = calculateDepthFactor(depthOf(block));
@@ -103,6 +101,7 @@ function applyRipple(focusBlock?: HTMLElement | null): void {
       const weightFactor = WEIGHT_MIN + weight * (1 - WEIGHT_MIN);
       const blockOpacity = baseLevel * weightFactor * depthFactor * embedMult;
       block.style.opacity = String(blockOpacity);
+      modifiedBlocks.add(block);
     });
 
     // v2.3.0：句级微调 — 仅当前块内非当前句 = 0.88（绝对值，不乘以块级 modifiers），
@@ -116,67 +115,23 @@ function applyRipple(focusBlock?: HTMLElement | null): void {
 }
 
 function clearAllOpacity(): void {
+  // Only clear blocks that were actually modified (dirty tracking)
+  modifiedBlocks.forEach(block => { block.style.opacity = ""; });
+  modifiedBlocks.clear();
+
+  // Sentence spans still need container-wide cleanup (they may exist in any container)
   const containers = document.querySelectorAll<HTMLElement>('.protyle-wysiwyg');
   containers.forEach(container => {
     removeSentenceSpans(container);
-    const blocks = container.querySelectorAll<HTMLElement>('[data-node-id], iframe, video');
-    blocks.forEach(block => { block.style.opacity = ""; });
   });
 }
 
 function onSelectionChange(): void {
-  lastTextCursorChange = Date.now();
-  const cursor = getCursorElement();
-  lastTextBlock = cursor?.closest("[data-node-id]") ?? null;
-
-  // 文本事件：切回 text 模式（如果未在 paused），并重应用涟漪
+  // 文本事件：重应用涟漪
   if (mode !== "paused") {
     mode = "text";
     applyRipple();
   }
-}
-
-function onMouseMove(e: MouseEvent): void {
-  const now = Date.now();
-  if (now - lastMouseMove < MOUSE_THROTTLE) return;
-  lastMouseMove = now;
-
-  // 鼠标聚焦模式已停用（用户暂未决定此功能该出现在什么场景）。
-  // 下方整段 mouse 模式逻辑被注释保留，未来如需恢复可整段还原。
-  // 鼠标在编辑器外：mouse → text
-  // const target = e.target as Element | null;
-  // if (!target?.closest(".protyle-wysiwyg")) {
-  //   if (mode === "mouse") {
-  //     mode = "text";
-  //     applyRipple();
-  //   }
-  //   return;
-  // }
-
-  // 鼠标在滚动条上：忽略
-  // if (isOverScrollbar(e)) return;
-
-  // const elementAtPoint = document.elementFromPoint(e.clientX, e.clientY);
-  // if (!elementAtPoint) return;
-
-  // const mouseBlock = elementAtPoint.closest("[data-node-id], iframe, video");
-  // if (!mouseBlock) return;
-  // lastMouseBlock = mouseBlock as Element;
-
-  // 决定是否切到 mouse 模式
-  // const readMode = isReadMode();
-  // const idleTooLong = now - lastTextCursorChange > IDLE_THRESHOLD;
-  // const mouseInDifferentBlock =
-  //   lastTextBlock &&
-  //   !mouseBlock.contains(lastTextBlock) &&
-  //   !lastTextBlock.contains(mouseBlock);
-
-  // if (readMode || idleTooLong || mouseInDifferentBlock) {
-  //   if (mode !== "mouse") {
-  //     mode = "mouse";
-  //   }
-  //   applyRipple();
-  // }
 }
 
 /**
@@ -186,6 +141,7 @@ function onMouseMove(e: MouseEvent): void {
  * 块级插入刚结束时 getCursorElement() 可能还未刷新到新块，用参数显式指定。
  */
 export function recompute(currentBlock: HTMLElement | null): void {
+  if (!active) return;
   if (!currentBlock) return;
   const container = currentBlock.closest('.protyle-wysiwyg') as HTMLElement | null;
   if (!container) return;
@@ -197,12 +153,9 @@ export function recompute(currentBlock: HTMLElement | null): void {
 }
 
 export function initRipple(): void {
+  active = true;
   mode = "text";
-  lastTextCursorChange = Date.now();
-  lastMouseBlock = null;
-  lastTextBlock = null;
   pendingFrame = null;
-  lastMouseMove = 0;
 
   // 事件数组使用三元组以便保留 options（鼠标聚焦模式已停用 → 不再注册 mousemove）
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
@@ -221,6 +174,7 @@ export function initRipple(): void {
 }
 
 export function destroyRipple(): void {
+  active = false;
   eventListeners.forEach(([event, handler]) => {
     document.removeEventListener(event, handler);
   });
@@ -234,8 +188,6 @@ export function destroyRipple(): void {
   clearAllOpacity();
 
   mode = "text";
-  lastMouseBlock = null;
-  lastTextBlock = null;
 }
 
 /* ---------------------------------------------------------------------------
@@ -258,7 +210,7 @@ export function destroyRipple(): void {
 const SENTENCE_SPAN_CLASS = "zt-sentence-span";
 
 /** v2.3.0：可被句级分割的块类型白名单。 */
-export const RIPPLE_TARGET_BLOCK_TYPES = new Set<string>([
+const RIPPLE_TARGET_BLOCK_TYPES = new Set<string>([
   "NodeParagraph",
   "NodeHeading",
   "NodeListItem",
@@ -266,7 +218,7 @@ export const RIPPLE_TARGET_BLOCK_TYPES = new Set<string>([
 ]);
 
 /** v2.3.0：永远跳过（不可读 / 嵌入 / 数据库）。 */
-export const RIPPLE_SKIP_BLOCK_TYPES = new Set<string>([
+const RIPPLE_SKIP_BLOCK_TYPES = new Set<string>([
   "NodeCodeBlock",
   "NodeBlockQueryEmbed",
   "NodeAttributeView",
@@ -276,7 +228,7 @@ export const RIPPLE_SKIP_BLOCK_TYPES = new Set<string>([
 ]);
 
 /** v2.3.0：HTML 层级过滤 — AV 视图、原始代码块。 */
-export const RIPPLE_SKIP_SELECTORS = [".av", ".av__mask", "code", "pre"];
+const RIPPLE_SKIP_SELECTORS = [".av", ".av__mask", "code", "pre"];
 
 /**
  * v2.3.0：判断块是否在句级分割的目标范围内。
@@ -515,7 +467,21 @@ export function wrapTextRange(
 
     const fragment = range.extractContents();
     span.appendChild(fragment);
-    range.insertNode(span);
+
+    try {
+      range.insertNode(span);
+    } catch {
+      // insertNode failed after extract — recover content to prevent data loss
+      try {
+        while (span.firstChild) {
+          range.insertNode(span.firstChild);
+        }
+      } catch {
+        console.error("[zenType] wrapTextRange: failed to recover content after insertNode failure");
+      }
+      restoreSelection(savedSelection);
+      return null;
+    }
 
     restoreSelection(savedSelection);
     return span;

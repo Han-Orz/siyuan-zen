@@ -48,17 +48,10 @@ export function findClosestScrollableElement(el: Element): HTMLElement | null {
     current = current.parentElement;
   }
 
-  // 检查根元素
+  // 检查根元素（body / documentElement）
   const roots: HTMLElement[] = [document.body, document.documentElement];
   for (const root of roots) {
-    const style = window.getComputedStyle(root);
-    const canScrollY =
-      (style.overflowY === "scroll" || style.overflowY === "auto") &&
-      root.scrollHeight > root.clientHeight;
-    const canScrollX =
-      (style.overflowX === "scroll" || style.overflowX === "auto") &&
-      root.scrollWidth > root.clientWidth;
-    if (canScrollY || canScrollX) return root;
+    if (hasScroll(root)) return root;
   }
   return null;
 }

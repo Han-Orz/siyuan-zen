@@ -1,22 +1,21 @@
 /**
- * 顺滑光标边界检测（P0 BUG 4）。
+ * 编辑器边界检测（共享工具）。
  *
- * 3 重检测（round 3 移除第 3 重弹窗/对话框/搜索框硬性排除，匹配参考版行为）：
+ * 3 重检测：
  *   1) getActiveEditor() 校验 —— 选区是否属于当前活跃编辑器
  *   2) AV 数据库块排除 —— .av / .av__mask / .av__cursor
- *   3) AABB 碰撞 —— 光标坐标是否在 .proyle-content 可视范围内
+ *   3) AABB 碰撞 —— 光标坐标是否在 .protyle-content 可视范围内
  *      + 嵌套滚动容器回退
  *
- * round 3 决策：删除 isInsidePopupOrDialog()。搜索框/设置面板/弹窗 iframe
- * 不包含 protyle-content，会被 AABB 自然拒绝；block__popover 现在允许显示
- * （由 getEffectiveZIndex 处理层级）。
+ * 从 src/modules/cursor/boundary.ts 迁移至 utils，
+ * 供 cursor / typewriter 等模块共享，解除 typewriter → cursor 硬依赖。
  *
  * 参考：legacy 顺滑光标.js isInAllowElements()、Neo-Plus getselection.ts。
  */
 
 import { getActiveEditor } from "siyuan";
-import { getCursorElement } from "../../utils/getCursorElement";
-import { findClosestScrollableElement } from "../../utils/scroll";
+import { getCursorElement } from "./getCursorElement";
+import { findClosestScrollableElement } from "./scroll";
 
 export interface AllowResult {
   allowed: boolean;
@@ -151,5 +150,3 @@ export function isInAllowElements(pos: { x: number; y: number }): AllowResult {
     },
   };
 }
-
-// P2: findClosestScrollableElement 已迁移到 ../../utils/scroll（统一去重）

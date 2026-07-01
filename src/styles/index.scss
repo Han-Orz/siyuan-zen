@@ -101,10 +101,6 @@ body.zentype-cursor-active .protyle-title__input { caret-color: transparent; }
 // 侧边栏拖动手柄禁止选择（防止拖动时被误插入 marker）
 .layout__resize { user-select: none; }
 
-// ===== 打字机高亮条（暂时禁用） =====
-// P3 重构：先下线高亮条，专注滚动行为。详见 src/config.ts :: TYPEWRITER_HIGHLIGHT_RESERVED
-// 恢复时在此处补回 #zentype-highlight-line + [data-theme-mode="dark"] --zt-highlight-bg。
-
 // ===== 顶栏图标两态 =====
 // 通过容器 class (.zentype-topbar-icon--on / --off) 的后代选择器
 // 控制 SVG <circle> 的 fill / stroke / animation。SVG DOM 永不替换，

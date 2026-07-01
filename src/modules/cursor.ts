@@ -29,7 +29,7 @@ import type { IProtyle, IWebSocketData } from "siyuan/types";
 import { CURSOR_CONFIG, EDGE_ARROW, EDGE_FADE, TRANSITION } from "../config";
 import { getCursorRect } from "../utils/getCursorRect";
 import { findAllScrollableAncestors } from "../utils/scroll";
-import { isInAllowElements } from "./cursor/boundary";
+import { isInAllowElements } from "../utils/boundary";
 import { isMobile } from "../utils/isMobile";
 import { getEffectiveZIndex } from "../utils/getEffectiveZIndex";
 import { getEdgeProximity, type EdgeProximity } from "../utils/edgeProximity";

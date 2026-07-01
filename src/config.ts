@@ -36,46 +36,21 @@ export const CURSOR_CONFIG = {
 
 /** 打字机参数（光标保持在 38% 位置时滚动到屏幕中心）。 */
 export const TYPEWRITER_CONFIG = {
-  /** v2.2.1 旧字段，保留兼容（v2.3.0 改用 COMFORT_ZONE 区间）。 */
-  TARGET_RATIO: 0.38,
   /** v2.3.0：舒适区间 [低, 高]。光标在此区间内时不触发滚动。 */
   COMFORT_ZONE: [0.38, 0.50],
-  /** v2.3.0：滚动距离→时长分档（ms），从 typewriter.ts 移入 config。 */
-  SCROLL_DURATION_TIERS: [120, 180, 260, 360, 500],
-  /** v2.3.0：打字机滚动动画曲线（与光标 transition 一致）。 */
+  /** 滚动距离→时长分档（ms）。 */
+  SCROLL_DURATION_TIERS: [180, 260, 360, 480, 600],
+  /** 块级 FLIP 过渡动画曲线。 */
   SCROLL_CURVE: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
-  /** 保留兼容（v2.3.0 不再使用）。 */
-  THRESHOLD: 40,
-  /** 保留兼容（v2.3.0 改用 SCROLL_DURATION_TIERS）。 */
-  DURATION: 400,
 } as const;
 
 /* ---------------------------------------------------------------------------
- * 高亮条 (highlight bar) 入口 — 当前未启用
- *
- * 状态：暂时禁用。typewriter 模块当前只做滚动，不再渲染高亮条。
- *      相关 DOM / CSS 已移除（src/modules/typewriter.ts、src/styles/index.scss）。
- *      本注释保留作为未来恢复入口。
- *
- * 恢复步骤（未来）：
- *   1. src/modules/typewriter.ts
- *        → 重新引入 createHighlightElement() + updateHighlight()
- *        → initTypewriter() 创建 div，destroyTypewriter() 清理
- *        → checkAndScroll() 在每条 early-return 路径清 .visible
- *   2. src/styles/index.scss
- *        → 恢复 #zentype-highlight-line + .visible 块（参见 git 历史 v2.2 之前）
- *   3. 可选：考虑 Neo-Plus 风格的 CSS mask 方案
- *        （见 参考/Neo-Plus-聚焦与打字机分析.md §4.5 — 收益最大但风险最高）
- *
- * 历史：v2.2.x 使用 #zentype-highlight-line div + CSS transform，z-index 由
- *       src/utils/getEffectiveZIndex.ts 沿祖先链动态计算。P3 重构时下线。
+ * 高亮条 (highlight bar) — 已下线。恢复步骤见 git 历史 v2.2 之前。
  * ------------------------------------------------------------------------- */
 
 /** 涟漪聚焦参数（按块距离衰减 opacity）。 */
 export const RIPPLE_CONFIG = {
-  /** v2.2.1 旧字段，保留兼容（v2.3.0 改用 SENTENCE_LEVELS）。 */
-  OPACITY_LEVELS: [1.0, 0.85, 0.6, 0.35, 0.15, 0.05] as const,
-  /** v2.3.0：句级 / 块级 opacity 梯度（5 档，替换旧的 6 档块级 OPACITY_LEVELS）。 */
+  /** v2.3.0：句级 / 块级 opacity 梯度（5 档）。 */
   SENTENCE_LEVELS: [1.0, 0.88, 0.72, 0.55, 0.42] as const,
   /** v2.3.0：嵌入块基础值 × 此系数（TODO: 区分不同块类型）。 */
   EMBED_MULTIPLIER: 0.85,
@@ -83,10 +58,6 @@ export const RIPPLE_CONFIG = {
   DEPTH_FACTOR: 0.05,
   /** v2.3.0：视觉权重下限（lerp 起点）。 */
   WEIGHT_MIN: 0.85,
-  /** 鼠标移动事件节流（ms）。 */
-  MOUSE_THROTTLE: 100,
-  /** 空闲多少毫秒后从 text 模式切到 mouse 模式。 */
-  IDLE_THRESHOLD: 2000,
 } as const;
 
 /** 边缘交互：光标接近视口边缘时的淡出 + 缩放。 */
