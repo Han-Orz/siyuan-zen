@@ -75,14 +75,20 @@ if (typeof window !== "undefined") {
 }
 
 // DEBUG helper：事件 buffer 记录 + enabled 时 console.log。
+// important = true 时无视 enabled 状态必 push + log（关键事件必捕获）；
+// important = false 时仅 enabled 状态下记录（避免 disabled 时 buffer 被噪音灌满）。
 // 测试用 — bug 修复后随 banner 一起删除。
-function __ztDebugPush(type: string, data?: unknown): void {
+function __ztDebugPush(type: string, data?: unknown, important = false): void {
+  // 非重要事件 + debug 关闭 → 完全跳过（不入 events、不 log），生产零开销
+  if (!important && !__ztDebug.enabled) return;
+
   const ev = { t: Date.now(), type, data };
   __ztDebug.events.push(ev);
   if (__ztDebug.events.length > __ztDebug.maxEvents) {
     __ztDebug.events.shift();
   }
-  if (__ztDebug.enabled) {
+  // important 事件必 log；普通事件仅 enabled 时 log
+  if (important || __ztDebug.enabled) {
     console.log("[zt-typewriter]", type, data ?? "");
   }
 }
@@ -334,7 +340,17 @@ function checkAndScroll(): void {
   // DEBUG: log scroll decision — 测试用，bug 修复后随 banner 一起删除。
   __ztDebug.cursorPct = cursorPct;
   __ztDebug.deltaY = deltaY;
+  // 全量记录：保留完整 cursorPct/deltaY 历史，state() 快照可读
   __ztDebugPush("checkAndScroll", { cursorPct, deltaY, comfortZone: COMFORT_ZONE });
+
+  // 仅重要事件 push 到 events + console：光标偏离舒适区且 deltaY 非零
+  // （即真正触发 scroll 的时刻），过滤掉舒适区内 deltaY=0 的循环噪音
+  const isOutsideComfortZone = cursorPct < COMFORT_ZONE[0] || cursorPct > COMFORT_ZONE[1];
+  __ztDebugPush(
+    "checkAndScroll:important",
+    { cursorPct, deltaY },
+    isOutsideComfortZone && deltaY !== 0,
+  );
 
   if (Math.abs(deltaY) >= 1) {
     smoothScroll(container, { deltaY });
