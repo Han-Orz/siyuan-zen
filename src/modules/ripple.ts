@@ -46,13 +46,16 @@ function calculateBlockDistance(
   fromIndex: number,
 ): number {
   const toIndex = indexMap.get(to);
-  if (toIndex === undefined) return fromIndex + 1; // non-sibling fallback (preserves old behavior)
+  if (toIndex === undefined) return fromIndex + 1;
   return Math.abs(fromIndex - toIndex);
 }
 
 function applyRipple(focusBlock?: HTMLElement | null): void {
   if (pendingFrame !== null) return;
+  let rippleInProgress = false;
   pendingFrame = requestAnimationFrame(() => {
+    if (rippleInProgress) return;
+    rippleInProgress = true;
     pendingFrame = null;
 
     // 聚焦模式关闭时：涟漪完全不工作（包括 mouse 模式）
@@ -91,11 +94,14 @@ function applyRipple(focusBlock?: HTMLElement | null): void {
       });
     }
     const allBlocks = container.querySelectorAll<HTMLElement>('[data-node-id], iframe, video');
+    // 性能：editorRect 在循环外计算一次，避免每个 visualWeightOf 调用重复 getBoundingClientRect
+    const editorForRect = container.closest<HTMLElement>(".protyle-wysiwyg") || container;
+    const cachedEditorRect = editorForRect.getBoundingClientRect();
     allBlocks.forEach((block) => {
       if (!isRippleTargetBlock(block)) return;
       const distance = calculateBlockDistance(currentBlock, block, indexMap, fromIndex);
       const baseLevel = SENTENCE_LEVELS[Math.min(distance, SENTENCE_LEVELS.length - 1)];
-      const weight = visualWeightOf(block);
+      const weight = visualWeightOf(block, cachedEditorRect);
       const depthFactor = calculateDepthFactor(depthOf(block));
       const embedMult = isEmbedBlock(block) ? EMBED_MULTIPLIER : 1;
       const weightFactor = WEIGHT_MIN + weight * (1 - WEIGHT_MIN);
@@ -111,6 +117,8 @@ function applyRipple(focusBlock?: HTMLElement | null): void {
         span.style.opacity = span === currentSentence ? "1" : "0.88";
       });
     }
+
+    rippleInProgress = false;
   });
 }
 
@@ -635,13 +643,19 @@ export function revealSentenceSpans(container: HTMLElement): void {
 /**
  * v2.3.0：块的视觉权重 = 块在编辑器可视区内的可见高度 / 编辑器高度。
  * weight=1.0 → 块占满可视区；weight=0 → 块完全在视窗外。
+ * 性能：editorRect 提到循环外，每个块只调一次 getBoundingClientRect。
  */
-export function visualWeightOf(block: HTMLElement): number {
+export function visualWeightOf(block: HTMLElement, cachedEditorRect?: DOMRect): number {
   if (!block) return 1.0;
   const rect = block.getBoundingClientRect();
-  const editor = block.closest<HTMLElement>(".protyle-wysiwyg");
-  if (!editor) return 1.0;
-  const editorRect = editor.getBoundingClientRect();
+  let editorRect: DOMRect;
+  if (cachedEditorRect) {
+    editorRect = cachedEditorRect;
+  } else {
+    const editor = block.closest<HTMLElement>(".protyle-wysiwyg");
+    if (!editor) return 1.0;
+    editorRect = editor.getBoundingClientRect();
+  }
   const visibleTop = Math.max(rect.top, editorRect.top);
   const visibleBottom = Math.min(rect.bottom, editorRect.bottom);
   const visibleHeight = Math.max(0, visibleBottom - visibleTop);

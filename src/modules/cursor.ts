@@ -338,7 +338,7 @@ function doUpdateCursor(): void {
   } else {
     // 远离边缘：清 inline opacity 让 CSS / 呼吸动画接管；transform 不带 scale
     // Q7：长距离 = 长时长。查表 TRANSITION.TIERS（config.ts），用户可自行调整。
-    const dist = prevCursorX !== null ? Math.hypot(rect.x - prevCursorX, rect.y - prevCursorY!) : 0;
+    const dist = prevCursorX !== null && prevCursorY !== null ? Math.hypot(rect.x - prevCursorX, rect.y - prevCursorY) : 0;
     const dur = transitionDurationForDistance(dist);
     cursorEl.style.transition = `transform ${dur}s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out`;
     cursorEl.style.opacity = "";
@@ -448,8 +448,21 @@ function bindResizeObservers(cursorElement: Element | null): void {
 }
 
 /** 绑定 block__popover 拖动手柄（.resize__move）的 mousedown/mousemove/mouseup */
+function unbindPopoverDrag(): void {
+  if (!popoverDragBinding) return;
+  const { dragEl, onMouseDown, onMouseMove, onMouseUp } = popoverDragBinding;
+  dragEl.removeEventListener("mousedown", onMouseDown);
+  document.removeEventListener("mousemove", onMouseMove);
+  document.removeEventListener("mouseup", onMouseUp);
+  popoverDragBinding = null;
+}
+
 function bindPopoverDrag(cursorElement: Element | null): void {
   if (!cursorElement) return;
+  // 如果已有绑定但对应的 popover 已从 DOM 中移除（弹窗关闭），先清理再重新绑定
+  if (popoverDragBinding && !popoverDragBinding.blockPopover.isConnected) {
+    unbindPopoverDrag();
+  }
   if (popoverDragBinding) return; // 已绑定，跳过（弹窗通常单实例）
 
   const blockPopover = cursorElement.closest(
@@ -496,6 +509,21 @@ function bindScrollContainerEvents(cursorElement: Element | null): void {
   if (!cursorElement) return;
 
   const scrollEls = findAllScrollableAncestors(cursorElement);
+  const currentSet = new Set(scrollEls);
+
+  // 清理已绑定但不再属于当前祖先链的元素（Tab 切换 / DOM 重建后旧容器脱离）
+  for (let i = scrollEventBindings.length - 1; i >= 0; i--) {
+    const { el } = scrollEventBindings[i];
+    if (!currentSet.has(el)) {
+      if ((el as any).__zentypeScrollBound) {
+        delete (el as any).__zentypeScrollBound;
+      }
+      const [binding] = scrollEventBindings.splice(i, 1);
+      binding.el.removeEventListener("scroll", binding.handler);
+      binding.el.removeEventListener("wheel", binding.handler);
+    }
+  }
+
   scrollEls.forEach((scrollEl) => {
     if ((scrollEl as any).__zentypeScrollBound) return;
     (scrollEl as any).__zentypeScrollBound = true;
@@ -663,13 +691,7 @@ export function destroyCursor(): void {
   lastBoundProtyleContent = null;
   lastBoundProtyleWysiwyg = null;
 
-  if (popoverDragBinding) {
-    const { dragEl, onMouseDown, onMouseMove, onMouseUp } = popoverDragBinding;
-    dragEl.removeEventListener("mousedown", onMouseDown);
-    document.removeEventListener("mousemove", onMouseMove);
-    document.removeEventListener("mouseup", onMouseUp);
-    popoverDragBinding = null;
-  }
+  unbindPopoverDrag();
 
   scrollEventBindings.forEach(({ el, handler }) => {
     el.removeEventListener("scroll", handler);

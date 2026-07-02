@@ -4,17 +4,20 @@ import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
 import * as inputMode from "./inputMode";
 import { isInAllowElements } from "../utils/boundary";
-import { Debug } from "../utils/debug";
 
 const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE } = TYPEWRITER_CONFIG;
-
-const dbg = Debug.namespace("typewriter");
 
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
 let pendingScrollTarget: HTMLElement | null = null;
 let pendingScrollEnd: number = 0;
-let isScrolling = false;
+let activeFLIPTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** isScrolling 由 pendingScroll !== null 推断，无需独立状态管理 — 避免动画结束到定时器置 false 间的竞态窗口 */
+function isScrolling(): boolean {
+  return pendingScroll !== null;
+}
+
 let pendingCheck: number | null = null;
 let cachedContainer: HTMLElement | null = null;
 let cachedCursorElement: Element | null = null;
@@ -33,8 +36,15 @@ function easeOutCubic(t: number): number {
  *   Phase 3 (Play):    一个 rAF 统一启动所有 transition，一个 setTimeout 集中清理
  *
  * 对比旧版：不逐元素 reflow、不逐元素内层 rAF → 无中间帧残影，定时器从 N×2 降到 2。
+ * 防重入：新调用会取消前一轮的 cleanup 定时器，防止覆盖 transform 后又被旧 cleanup 清空。
  */
 function animateBlockShift(editor: HTMLElement): void {
+  // 取消前一轮 FLIP cleanup，防止连续 Enter 时前一轮 Phase 3 的 setTimeout 清空当前 transform
+  if (activeFLIPTimer !== null) {
+    clearTimeout(activeFLIPTimer);
+    activeFLIPTimer = null;
+  }
+
   // First: 捕获阶段同步快照所有块的旧位置（在 Enter 的 capture handler 中调用，
   // 此时 SiYuan bubble handler 尚未改 DOM）
   const first = new Map<HTMLElement, number>();
@@ -69,7 +79,13 @@ function animateBlockShift(editor: HTMLElement): void {
         el.style.transition = `transform 250ms ${SCROLL_CURVE}`;
         el.style.transform = '';
       }
-      setTimeout(() => {
+      if (activeFLIPTimer !== null) {
+        clearTimeout(activeFLIPTimer);
+        activeFLIPTimer = null;
+      }
+      activeFLIPTimer = setTimeout(() => {
+        if (activeFLIPTimer === null) return;  // 被新 FLIP 取消，跳过 cleanup
+        activeFLIPTimer = null;
         modifiedElements.forEach(el => {
           el.style.transform = '';
           el.style.transition = '';
@@ -95,12 +111,8 @@ interface SmoothScrollOptions {
 function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   const { deltaY, duration } = options;
 
-  isScrolling = true;
-  dbg.setField("isScrolling", true);
-
   if (pendingScroll !== null && pendingScrollTarget === target) {
     pendingScrollEnd = target.scrollTop + deltaY;
-    dbg.setField("pendingScrollEnd", pendingScrollEnd);
     return;
   }
 
@@ -113,12 +125,6 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   const startTime = performance.now();
   const dur = duration ?? durationForDistance(Math.abs(deltaY));
 
-  dbg.push("smoothScroll:start", {
-    startScrollTop: startScroll,
-    targetScrollTop: pendingScrollEnd,
-    duration: dur,
-  });
-
   function step() {
     const elapsed = performance.now() - startTime;
     const t = Math.min(elapsed / dur, 1);
@@ -129,24 +135,14 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
         startScroll + (currentEnd - startScroll) * eased,
         maxScroll
     ));
-    dbg.setField("scrollTop", target.scrollTop);
-    if (dbg.isEnabled()) {
-      dbg.push("raf", { progress: t.toFixed(3), scrollTop: target.scrollTop });
-    }
     if (t < 1) {
       pendingScroll = requestAnimationFrame(step);
-      dbg.setField("scrollRafId", pendingScroll);
     } else {
       pendingScroll = null;
       pendingScrollTarget = null;
-      dbg.setField("isScrolling", false);
-      dbg.setField("scrollTop", target.scrollTop);
-      dbg.push("smoothScroll:end", { finalScrollTop: target.scrollTop });
-      setTimeout(() => { isScrolling = false; }, 100);
     }
   }
   pendingScroll = requestAnimationFrame(step);
-  dbg.setField("scrollRafId", pendingScroll);
 }
 
 function scheduleCheck(): void {
@@ -165,7 +161,7 @@ function checkAndScroll(): void {
   if (shouldPauseTypewriter()) return;
 
   // 动画进行中：不触发新 scroll，防止连续 keystroke 雪崩到 clamp 边界
-  if (isScrolling) return;
+  if (isScrolling()) return;
 
   const rect = getCursorRect();
   if (!rect) return;
@@ -188,7 +184,7 @@ function checkAndScroll(): void {
   // 光标垂直跳跃（>3px）→ 块插入/删除后 SiYuan 布局未收敛，"弹跳"到错误位置
   // 再纠正回来。推迟一帧等布局稳定。正常打字（同行 x 变 y 不变）不触发。
   if (prevY !== undefined && Math.abs(rect.y - prevY) > 3) {
-    requestAnimationFrame(() => checkAndScroll());
+    scheduleCheck();
     return;
   }
 
@@ -207,7 +203,9 @@ function checkAndScroll(): void {
   // 同时这是防御层：即使未来 fallback 路径再次突变 DOM，空块也直接退出。
   const cursorBlock = result.cursorElement.closest('[data-node-id]');
   if (cursorBlock) {
-    const text = cursorBlock.textContent?.trim() ?? '';
+    // trim() 不移除 ZWSP(\u200B)、BOM(\uFEFF)、NBSP(\u00A0)——SiYuan 可能用这些做占位
+    const text = (cursorBlock.textContent?.trim() ?? '')
+      .replace(/[\u200B\uFEFF\u00A0]/g, '');
     const isEmptyBlock = text === ''
       && !cursorBlock.querySelector(
         'img, iframe, [data-type^="NodeMathBlock"], [data-type^="NodeCodeBlock"]',
@@ -216,8 +214,13 @@ function checkAndScroll(): void {
   }
 
   // 缓存命中：同一 cursorElement 复用上次的 scroll container，避免每次都 DOM 遍历
+  // 同时检查容器是否仍在 DOM 中（主题切换 / 面板 resize / tab 切换可能导致容器被替换）
   let container: HTMLElement | null;
-  if (result.cursorElement === cachedCursorElement && cachedContainer) {
+  if (
+    result.cursorElement === cachedCursorElement &&
+    cachedContainer &&
+    cachedContainer.isConnected
+  ) {
     container = cachedContainer;
   } else {
     container = findClosestScrollableElement(result.cursorElement);
@@ -225,14 +228,6 @@ function checkAndScroll(): void {
     cachedCursorElement = result.cursorElement;
   }
   if (!container) return;
-
-  dbg.setField("cursor", rect);
-  dbg.setField("editor", result.editorRect);
-  dbg.setField("container", container);
-  dbg.setField("scrollTop", container.scrollTop);
-  dbg.setField("scrollHeight", container.scrollHeight);
-  dbg.setField("clientHeight", container.clientHeight);
-  dbg.setField("pendingScrollEnd", pendingScrollEnd);
 
   // 使用 editorRect（protyle-content 的 bounding rect）作为滚动锚点
   // 而非 container.getBoundingClientRect()（可能是更大的祖先元素）
@@ -253,20 +248,6 @@ function checkAndScroll(): void {
   }
   // else: 舒适区内，deltaY = 0，不滚
 
-  dbg.setField("cursorPct", cursorPct);
-  dbg.setField("deltaY", deltaY);
-  // 全量记录：保留完整 cursorPct/deltaY 历史，state() 快照可读
-  dbg.push("checkAndScroll", { cursorPct, deltaY, comfortZone: COMFORT_ZONE });
-
-  // 仅重要事件 push 到 events + console：光标偏离舒适区且 deltaY 非零
-  // （即真正触发 scroll 的时刻），过滤掉舒适区内 deltaY=0 的循环噪音
-  const isOutsideComfortZone = cursorPct < COMFORT_ZONE[0] || cursorPct > COMFORT_ZONE[1];
-  dbg.push(
-    "checkAndScroll:important",
-    { cursorPct, deltaY },
-    isOutsideComfortZone && deltaY !== 0,
-  );
-
   if (Math.abs(deltaY) >= 1) {
     smoothScroll(container, { deltaY });
   }
@@ -277,19 +258,30 @@ export function initTypewriter(): void {
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", scheduleCheck],
     ["resize", scheduleCheck],
-    // Enter / Backspace 块变更 → 块级 FLIP 过渡动画
+    // Enter / Backspace 块变更 → 块级 FLIP 过渡动画 + 重新对齐舒适区
     // capture 阶段：先于 SiYuan bubble handler，在 DOM 变更前快照块位置
     [
       "keydown",
       (e) => {
         const ke = e as KeyboardEvent;
         if (ke.key !== "Enter" && ke.key !== "Backspace") return;
+        // 先触发 FLIP 快照
         const sel = window.getSelection();
         if (!sel || !sel.rangeCount) return;
         const editor = sel.anchorNode?.parentElement?.closest(
           ".protyle-wysiwyg",
         ) as HTMLElement | null;
         if (editor) animateBlockShift(editor);
+        // 延迟两帧等 SiYuan 布局收敛后再触发滚动对齐
+        // 不能用 scheduleCheck() 唯一一帧，因为思源在 Enter/Backspace 的 bubble
+        // handler 中还要修改 DOM，一帧不够——两帧后布局稳定
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            // 同时清掉 lastCheckRect 让 checkAndScroll 不因坐标未变而跳过
+            lastCheckRect = null;
+            checkAndScroll();
+          });
+        });
       },
       { capture: true },
     ],
@@ -321,12 +313,15 @@ export function destroyTypewriter(): void {
     cancelAnimationFrame(pendingCheck);
     pendingCheck = null;
   }
+
+  if (activeFLIPTimer !== null) {
+    clearTimeout(activeFLIPTimer);
+    activeFLIPTimer = null;
+  }
+
   cachedContainer = null;
   cachedCursorElement = null;
   lastCheckRect = null;
   pendingScrollTarget = null;
   pendingScrollEnd = 0;
-  isScrolling = false;
-
-  dbg.clearFields();
 }

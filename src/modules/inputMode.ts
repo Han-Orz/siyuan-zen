@@ -51,34 +51,6 @@ export function setBothOff(): void {
   notify();
 }
 
-/** 命令："模拟一次输入" → 仅开启聚焦模式 */
-export function simulateFocusInput(): void {
-  if (focusActive) return;
-  focusActive = true;
-  notify();
-}
-
-/** 命令："模拟一次输入" → 仅开启打字机模式 */
-export function simulateTypewriterInput(): void {
-  if (typewriterActive) return;
-  typewriterActive = true;
-  notify();
-}
-
-/** 命令："手动关闭聚焦模式" → 仅关闭聚焦模式 */
-export function disableFocus(): void {
-  if (!focusActive) return;
-  focusActive = false;
-  notify();
-}
-
-/** 命令："手动关闭打字机模式" → 仅关闭打字机模式 */
-export function disableTypewriter(): void {
-  if (!typewriterActive) return;
-  typewriterActive = false;
-  notify();
-}
-
 // ── 查询 API ──────────────────────────────────────────────────────────
 
 export function isFocusActive(): boolean {
@@ -87,11 +59,6 @@ export function isFocusActive(): boolean {
 
 export function isTypewriterActive(): boolean {
   return typewriterActive;
-}
-
-/** 任一模式激活 */
-export function isEitherActive(): boolean {
-  return focusActive || typewriterActive;
 }
 
 // ── 重置（onunload） ─────────────────────────────────────────────────

@@ -79,10 +79,19 @@ export function isInAllowElements(pos: { x: number; y: number }): AllowResult {
     ".protyle:not(.fn__none) .protyle-content",
   ) as HTMLElement | null;
 
-  // 标题区域特殊处理
+  // 标题区域特殊处理：返回最近的 protyle-content rect 作为 editorRect，使 typewriter 能滚动标题区域
   if (!protyleContent) {
     if (cursorElement.closest(".protyle-title__input")) {
-      return { allowed: true, cursorElement, isOuterElement: false };
+      const fallbackProtyle = cursorElement.closest(".protyle") as HTMLElement | null;
+      let titleEditorRect: { top: number; bottom: number; left: number; right: number } | undefined;
+      if (fallbackProtyle) {
+        const fallbackContent = fallbackProtyle.querySelector(".protyle-content") as HTMLElement | null;
+        if (fallbackContent) {
+          const r = fallbackContent.getBoundingClientRect();
+          titleEditorRect = { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+        }
+      }
+      return { allowed: true, cursorElement, isOuterElement: false, editorRect: titleEditorRect };
     }
     return {
       allowed: false,
@@ -110,7 +119,7 @@ export function isInAllowElements(pos: { x: number; y: number }): AllowResult {
         pos.y >= scrollRect.top &&
         pos.y <= scrollRect.bottom;
       return {
-        allowed: isInScroll && isInEditor,
+        allowed: isInScroll,
         cursorElement,
         isOuterElement: false,
         editorRect: {
@@ -119,8 +128,7 @@ export function isInAllowElements(pos: { x: number; y: number }): AllowResult {
           left: editorRect.left,
           right: editorRect.right,
         },
-        reason:
-          isInScroll && isInEditor ? undefined : "out of scroll container",
+        reason: isInScroll ? undefined : "out of nested scroll container",
       };
     }
 
