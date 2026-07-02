@@ -217,7 +217,7 @@ BLINK_DELAY_MS: 1500     // 停止活动后多少毫秒恢复呼吸
 - 输入时光标停在**舒适区间 `[38%, 50%]`**（38% 黄金分割偏上 / 50% 中线）—— 不强制固定目标位
 - **区间内不触发滚动**：光标在 38%-50% 范围内自由输入，避免累积漂移带来的"跳跃感"
 - **区间外触发滚动**：低于 38% 或高于 50% 时，smoothScroll 把光标带回最近边界
-- 平滑滚动动画，**距离分档时长**（20px 内 120ms / 60px 内 180ms / 150px 内 260ms / 400px 内 360ms / 超出 500ms）
+- 平滑滚动动画，**距离分档时长**（20px 内 180ms / 60px 内 260ms / 150px 内 360ms / 400px 内 480ms / 超出 600ms）
 - **动画曲线**：`cubic-bezier(0.25, 0.1, 0.25, 1)`（与顺滑光标 `cursor.ts:343` 一致，自然、顺滑）
 - **动画续接**：连续输入时，光标滚动"接"上一段动画继续，不会每按一次键就重启
 - **1px 阈值**：即使光标只偏离 1px 也立即触发滚动
@@ -232,7 +232,7 @@ BLINK_DELAY_MS: 1500     // 停止活动后多少毫秒恢复呼吸
 |---|---|---|---|
 | **舒适区间** | `[0.38, 0.50]` | `config.ts:40-41` `TYPEWRITER_CONFIG.COMFORT_ZONE` | 38%-50% 都接受，不强制固定目标；区间内不滚 |
 | **阈值** | 1px | `typewriter.ts:114` | 避免累积漂移到 40px 突然跳 |
-| **时长分档** | 120/180/260/360/500 ms | `config.ts` `TYPEWRITER_SCROLL_DURATION_TIERS` | 微调跟手 / 远跳留时间感知（v2.3.0 从 `typewriter.ts:22-29` 移到 config） |
+| **时长分档** | 180/260/360/480/600 ms | `config.ts` `TYPEWRITER_SCROLL_DURATION_TIERS` | 微调跟手 / 远跳留时间感知（v2.3.0 从 `typewriter.ts:22-29` 移到 config） |
 | **动画曲线** | `cubic-bezier(0.25, 0.1, 0.25, 1)` | `config.ts` `TYPEWRITER_SCROLL_CURVE` | 与光标一致（`cursor.ts:343`），自然顺滑 |
 | **动画续接** | 同一 target 追加 deltaY | `typewriter.ts:33-36` | 连续输入不"卡顿重启动画" |
 | **rAF debounce** | scheduleCheck 包裹 | `typewriter.ts:68-74` | 一次按键触发 4-5 事件合并为 1 次 checkAndScroll |
@@ -240,7 +240,7 @@ BLINK_DELAY_MS: 1500     // 停止活动后多少毫秒恢复呼吸
 | **滚动锚点** | `editorRect`（protyle-content rect） | `typewriter.ts:110-111` | 用裸 container rect 会算错位置（祖先元素可能更大） |
 | **选择器** | `isInAllowElements` 复用 cursor 的 | `typewriter.ts:6,89` | 已被 cursor 模块验证，分屏正确 |
 | **smoothScroll API** | `smoothScroll(el, {deltaY, duration, curve})` 曲线原语 | `typewriter.ts:31-66` 重构 | v2.3.0 改造：不规定方向，只规定曲线；调用方算 deltaY |
-| **块级插入动画** | markBlockInsertPending + FLIP | `typewriter.ts` 新增 §3.7 | 参考 cursor.ts round 4 fix（`cursor.ts:48-66,395-519`）：键盘事件打标 + 300ms cooldown，下游保留 transition |
+| **块级插入动画** | FLIP | `typewriter.ts` 新增 §3.7 | 参考 cursor.ts round 4 fix（`cursor.ts:48-66,395-519`）：键盘事件打标 + 300ms cooldown，下游保留 transition。注意：`markBlockInsertPending` 已在 c5bfdc9 删除，由 `animateBlockShift` 直接取代。 |
 | **Q1 决策：高亮条** | **永久下线** | `config.ts:48-66` 注释 | 用户偏好"纯滚动"，删除 DOM/CSS 减小维护面。入口保留以备未来恢复 |
 
 ### 3.3 代码实现逻辑
@@ -358,7 +358,7 @@ shouldPauseTypewriter():  // 仅 typewriter
 
 ```typescript
 COMFORT_ZONE: [0.38, 0.50]                        // 舒适区间（v2.3.0 新增，替换 TARGET_RATIO）
-SCROLL_DURATION_TIERS: [120, 180, 260, 360, 500]  // 距离分档 ms（v2.3.0 从 typewriter.ts 移入）
+SCROLL_DURATION_TIERS: [180, 260, 360, 480, 600]  // 距离分档 ms（v2.3.0 从 typewriter.ts 移入）
 SCROLL_CURVE: 'cubic-bezier(0.25, 0.1, 0.25, 1)' // 动画曲线（v2.3.0 新增，与光标一致）
 TARGET_RATIO: 0.38   // v2.2.1 旧字段，保留兼容（实际不再使用）
 THRESHOLD: 40        // （保留，typewriter.ts 不再使用）
@@ -376,37 +376,29 @@ DURATION: 400        // （保留，typewriter.ts 不再使用）
 
 **目标**：让 Enter 触发的"块级变化"视觉上不突兀。所有动画都是**位移**，没有 opacity 渐变。
 
-#### 3.7.1 模式（参考 cursor.ts round 4 fix）
+#### 3.7.1 实现
 
-参考 `cursor.ts:48-66, 395-519` 的 round 4 fix 模式：
-
-```typescript
-// typewriter.ts 新增
-let pendingBlockInsert = false;
-let blockInsertCooldownTimer: ReturnType<typeof setTimeout> | null = null;
-
-function markBlockInsertPending(): void {
-  pendingBlockInsert = true;
-  if (blockInsertCooldownTimer) clearTimeout(blockInsertCooldownTimer);
-  blockInsertCooldownTimer = setTimeout(() => {
-    pendingBlockInsert = false;
-  }, 300);  // 覆盖 FLIP + smoothScroll 总时长
-}
-```
+`animateBlockShift` 直接处理 FLIP 三阶段批处理（Invert → Commit → Play），无需独立 `markBlockInsertPending` 状态标记（`markBlockInsertPending` 已在 c5bfdc9 删除）。参考 cursor.ts round 4 fix 模式，keydown Enter/Backspace 的 capture handler 触发 `animateBlockShift` 快照，然后延迟两帧重新对齐舒适区。
 
 注册点（`typewriter.ts` 事件 handler）：
 ```typescript
-keydown Enter / 行首 Backspace / paste multi-line:
-  markBlockInsertPending();
-  animateNaturalReflow(editor);  // FLIP 入口
+keydown Enter / 行首 Backspace:
+  animateBlockShift(editor);  // FLIP 入口
+  // 延迟两帧等 SiYuan 布局收敛后再触发滚动对齐
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      lastCheckRect = null;
+      checkAndScroll();
+    });
+  });
 ```
 
-#### 3.7.2 FLIP 平滑 reflow（`animateNaturalReflow`）
+#### 3.7.2 FLIP 平滑 reflow（`animateBlockShift`）
 
 让"下方块被自然推下去"的瞬间不突兀 —— 用 FLIP（First-Last-Invert-Play）技术：
 
 ```typescript
-function animateNaturalReflow(editor: HTMLElement): void {
+function animateBlockShift(editor: HTMLElement): void {
   // First：DOM 变更前快照所有块位置
   const first = new Map<HTMLElement, number>();
   editor.querySelectorAll<HTMLElement>('[data-node-id]').forEach(el => {
@@ -525,11 +517,12 @@ applyRipple():  // rAF 节流（pendingFrame 标志）
   if (!container) return
 
   // v2.3.0：句级 + 动态列表
-  currentSentence = getCurrentSentence(currentBlock)  // 按 .?! 切句
+  currentSentence = getCurrentSentence(container, cursorRect)  // 按 .?! 切句
   allBlocks = Array.from(container.querySelectorAll('[data-node-id], iframe, video'))
+  // indexMap: Map<Element, number>（allBlocks → 序号），fromIndex = currentBlock 序号
   
   allBlocks.forEach(block => {
-    distance = calculateBlockDistance(currentBlock, block)
+    distance = calculateBlockDistance(currentBlock, block, indexMap, fromIndex)
     baseOpacity = SENTENCE_LEVELS[min(distance, 4)]  // 5 档 [1.0, 0.88, 0.72, 0.55, 0.42]
     
     let opacity = baseOpacity
@@ -569,17 +562,18 @@ applyRipple():  // rAF 节流（pendingFrame 标志）
 // 5. 临时生命周期：当前帧创建，下一帧 removeSentenceSpans 清理
 //    （不污染 WYSIWYG.lastHTMLs，不影响 undo/redo）
 
-getSentences(block: HTMLElement): HTMLElement[] {
-  if (!isRippleTargetBlock(block)) return [];  // block type 过滤
-  const text = block.textContent ?? '';
-  if (!text) return [];
+getSentences(container: HTMLElement, currentBlock: HTMLElement | null): Map<HTMLElement, HTMLElement[]> {
+  const result = new Map<HTMLElement, HTMLElement[]>();
+  if (!currentBlock || !container) return result;
+  if (!container.contains(currentBlock)) return result;
+  if (!isRippleTargetBlock(currentBlock)) return result;
 
   // 1. 清理旧句级 span（防累积）
-  removeSentenceSpans(block);
+  removeSentenceSpans(currentBlock);
 
   // 2. 收集块内所有文本节点 + 偏移映射
   const textNodes: Text[] = [];
-  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  const walker = document.createTreeWalker(currentBlock, NodeFilter.SHOW_TEXT);
   let node;
   while ((node = walker.nextNode())) textNodes.push(node);
   // ... 构造 offsets 数组
@@ -589,7 +583,7 @@ getSentences(block: HTMLElement): HTMLElement[] {
   const savedRange = sel?.getRangeAt(0).cloneRange();
 
   // 4. 按标点切句 + 包裹
-  const sentences: HTMLElement[] = [];
+  const spans: HTMLElement[] = [];
   // ... 遍历 regex.exec(text)，对每段 wrapTextRange(...)
 
   // 5. 兜底 + 恢复光标
@@ -597,16 +591,17 @@ getSentences(block: HTMLElement): HTMLElement[] {
     sel.removeAllRanges();
     sel.addRange(savedRange);
   }
-  return sentences;
+  result.set(currentBlock, spans);
+  return result;
 }
 
-getCurrentSentence(block: HTMLElement): HTMLElement | null {
+getCurrentSentence(container: HTMLElement, cursorRect: { x: number; y: number; height: number } | null): HTMLElement | null {
   // 基于 window.getSelection() 的 anchorNode，向上找 .zt-sentence-span
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount) return null;
   const range = sel.getRangeAt(0);
   let node: Node | null = range.startContainer;
-  while (node && node !== block) {
+  while (node && node !== currentBlock) {
     if (node instanceof HTMLElement && node.classList.contains('zt-sentence-span')) {
       return node;
     }
@@ -673,16 +668,16 @@ function depthFactor(depth: number): number {
 - 列表项作为兄弟节点时，w 接近 1.0；远离视窗时 w 趋近 0（更暗）
 - 嵌套深的项（list-in-list-in-list）深度系数衰减，避免"全部都很亮"
 
-#### 4.3.5 块距离计算（`ripple.ts:40-47`，保持）
+#### 4.3.5 块距离计算（`ripple.ts:42-51`，v2.3.0 改签名）
 
 ```typescript
-calculateBlockDistance(from, to):
-  fromParent = from.parentElement
-  siblings = Array.from(fromParent.children)  // 兄弟节点数组
-  fromIndex = siblings.indexOf(from)
-  toIndex = siblings.indexOf(to)
+calculateBlockDistance(from, to, indexMap, fromIndex):
+  toIndex = indexMap.get(to)
+  if toIndex === undefined: return fromIndex + 1
   return abs(fromIndex - toIndex)
 ```
+
+**v2.3.0 改动**：旧版用 `parentElement.children.indexOf` 求兄弟序号；新版由调用方预建 `indexMap: Map<Element, number>`（遍历 `allBlocks` 时一次性建好）并传入 `fromIndex`，函数体只做一次 Map 查表，避免每次重算 siblings 数组。
 
 **嵌套块 v1 简化**：子项（如列表项）和外层（列表本身）是 siblings 时会一起被渐淡；如果嵌套在另一个块内部（list-in-list），外层只算 1 个距离。**v2.3.0**：distance 仍是基础，opacity 由视觉权重 + 深度系数修正。
 
@@ -698,7 +693,7 @@ export function recompute(focusBlock: HTMLElement): void {
 }
 ```
 
-**调用链**：Enter → markBlockInsertPending + animateNaturalReflow → 250ms 后 → `ripple.recompute(currentBlock)`。
+**调用链**：Enter → `animateBlockShift` → 250ms 后 → `ripple.recompute(currentBlock)`。
 
 #### 4.3.4 触发链（`ripple.ts:102-112` + `index.ts`）
 
@@ -917,7 +912,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | 顺滑光标 | `EDGE_ARROW` | `OFFSET` | `8` | 距视口边缘距离（px） |
 | 顺滑光标 | `EDGE_ARROW` | `TRANSITION_MS` | `200` | 淡入淡出过渡时长 |
 | 打字机 | `TYPEWRITER_CONFIG` | **`COMFORT_ZONE`** | **`[0.38, 0.50]`** | **v2.3.0：舒适区间 [低, 高]；区间内不触发滚动** |
-| 打字机 | `TYPEWRITER_CONFIG` | **`SCROLL_DURATION_TIERS`** | **`[120, 180, 260, 360, 500]` ms** | **v2.3.0：距离分档时长（从 typewriter.ts 移入 config）** |
+| 打字机 | `TYPEWRITER_CONFIG` | **`SCROLL_DURATION_TIERS`** | **`[180, 260, 360, 480, 600]` ms** | **v2.3.0：距离分档时长（从 typewriter.ts 移入 config）** |
 | 打字机 | `TYPEWRITER_CONFIG` | **`SCROLL_CURVE`** | **`cubic-bezier(0.25, 0.1, 0.25, 1)`** | **v2.3.0：动画曲线（与光标一致）** |
 | 打字机 | `TYPEWRITER_CONFIG` | `TARGET_RATIO` | `0.38` | v2.2.1 旧字段，保留兼容（实际不再使用） |
 | 打字机 | `TYPEWRITER_CONFIG` | `THRESHOLD` | `40` | **保留，typewriter.ts 不再使用**（保留 API 稳定性） |
@@ -1014,7 +1009,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | **舒适区间 [38%, 50%]** | typewriter 目标位置改为区间，区间内不滚 | 用户测试：38-50 都接受 |
 | **smoothScroll 曲线原语** | `smoothScroll(el, {deltaY, duration, curve})`，不规定方向 | 块级插入动画需要"指定 deltaY"的版本 |
 | **动画曲线配置化** | `SCROLL_CURVE = cubic-bezier(0.25, 0.1, 0.25, 1)`，与光标一致 | 用户偏好"自然、有曲线、顺滑" |
-| **块级插入动画** | markBlockInsertPending + FLIP + 300ms cooldown | 参考 cursor.ts round 4 fix；用户要求"新块不能凭空出现" |
+| **块级插入动画** | FLIP + animateBlockShift | 参考 cursor.ts round 4 fix；`markBlockInsertPending` 已在 c5bfdc9 删除 |
 | **块级插入无 opacity 渐变** | 上块让位 = smoothScroll 视窗滚；下块补位 = FLIP；新块 = 1.0 直接出现 | 用户反问"新块默认不就是 1 吗" |
 | **位移幅度 = reflow delta** | FLIP 位移 = 块实际被推的距离，非硬编码 px | 用户纠正"不是固定 ±4px" |
 | **涟漪句级 opacity** | `[1.0, 0.88, 0.72, 0.55, 0.42]` 5 档（句级 + 块级） | 用户偏好"看清整句"，不只是块 |

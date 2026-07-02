@@ -1,6 +1,6 @@
 # TODO — Known Issues
 
-> **状态（2026-07-02）**：TODO-1~4 已解决；新增 TODO-5~7 待调查修复。
+> **状态（2026-07-02）**：TODO-1~5、7 已解决；Code Review P1-P3 已修复；TODO-6 待调查。
 
 ## 已解决
 
@@ -19,7 +19,10 @@
 
 ## 待解决
 
-### TODO-5: typewriter.ts — isScrolling 门禁导致快速打字卡顿
+### TODO-5: typewriter.ts — isScrolling 门禁导致快速打字卡顿 ✅ 已解决
+
+**解决 commit**：`2e89e2d` — 移除 100ms cooldown，`isScrolling` 改为派生 getter `pendingScroll !== null`（路径 A）。封锁窗口消除，`smoothScroll` 的 `pendingScroll` 合并路径始终可达。
+**注意**：cooldown 移除引入潜在回归风险，见文末"潜在回归"节。
 
 **优先级**：高
 **现象**：快速连续打字时，视口滚动出现跳跃感，而非平滑跟随光标。
@@ -232,4 +235,8 @@ const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
 ## 仍存留（不在本次范围）
 
 - **EDGE_ARROW 相关函数**：`createArrowElement` / `showArrow` / `hideArrow` / `getOffScreenArrowPosition` 因 `ENABLED=false` 不可达，但代码保留作为 opt-in 入口。如决定彻底删除可单独提一个 cleanup commit。
-- **`applyFadeAndScale` 的 `scale` 参数**：3 个调用点都传 `EDGE_FADE.MIN_SCALE`，参数实际上等价于常量。可清理（变成不带 scale 参数的 `applyFade`），但行为不变，只是冗余。
+- **`applyFadeAndScale` 的 `scale` 参数**：3 个调用点中 2 个传 `EDGE_FADE.MIN_SCALE`（完全离屏 / case B 淡出），第 3 个（FADE_ZONE 内部分可见）用 lerp 计算变化的 scale。参数本身并非冗余——部分淡出场景需要 scale 随 factor 渐变。仅完全离屏 + case B 两处可简化，但收益不大，保留现状。
+
+## 潜在回归（待复现，暂不动）
+
+- **`isScrolling` cooldown 移除**（v2.3.1，`2e89e2d`）：c5bfdc9 把 100ms cooldown 移除，改为纯派生 `pendingScroll !== null`。旧 100ms 是 `fix-typewriter-scroll-accumulation` 为防"雪崩到 clamp 边界"加的。现零 cooldown，若用户在编辑区已滚到 maxScroll/0 时连续打字，可能每帧触发一次空转的 rAF 滚动动画（lastCheckRect 去重因光标在动而失效）。**未确认**，等复现后决定：(a) 加回最小 ~50ms cooldown，或 (b) 在 `smoothScroll` 检测 `target.scrollTop + deltaY` 已被 clamp 则直接 return 不开动画。用户决定先不动（选项 C）。

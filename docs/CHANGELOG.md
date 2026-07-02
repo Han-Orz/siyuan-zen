@@ -7,7 +7,7 @@
 - **smoothScroll 曲线原语** —— 重构为 `smoothScroll(el, {deltaY, duration, curve})`，方向由调用方算
 - **块级插入动画**（Enter / 行首 Backspace / 多行粘贴）—— `markBlockInsertPending` + `animateNaturalReflow` FLIP 技术，参考 cursor.ts round 4 fix 模式
 - **动画曲线配置** `TYPEWRITER_CONFIG.SCROLL_CURVE = 'cubic-bezier(0.25, 0.1, 0.25, 1)'` —— 与光标一致
-- **距离分档时长移到 config** `TYPEWRITER_CONFIG.SCROLL_DURATION_TIERS = [120, 180, 260, 360, 500]`（用户可调）
+- **距离分档时长移到 config** `TYPEWRITER_CONFIG.SCROLL_DURATION_TIERS = [180, 260, 360, 480, 600]`（用户可调）
 - **涟漪句级 opacity 梯度** `RIPPLE_CONFIG.SENTENCE_LEVELS = [1.0, 0.88, 0.72, 0.55, 0.42]` —— 按 `.?!` 切句，当前句强制 1.0
 - **嵌入块修正** `RIPPLE_CONFIG.EMBED_MULTIPLIER = 0.85`
 - **列表块动态算法**（Q5 = C）—— `visualWeightOf` × `depthOf` × `depthFactor`，视觉权重匹配人眼感知
@@ -31,6 +31,32 @@
 - **句级切分边界**（中英文标点混合 / `...` / `?!` 组合）
 
 详见 `docs/DESIGN_v2.3.0_delta.md`。
+
+---
+
+## v2.3.1 (2026-07-02) — Code Review Fixes
+
+### Fixed
+- **typewriter rAF 合并器绕过** —— 垂直跳变检测改用 `scheduleCheck()` 代替 `requestAnimationFrame`，归入 `pendingCheck` 合并器，避免多帧排队
+- **typewriter `cachedContainer` DOM 脱离** —— 缓存命中条件新增 `isConnected` 检查，主题切换 / tab 切换时自动重算容器
+- **ZWSP-only 空块守卫** —— `isEmptyBlock` 归一化 `\u200B` / `\uFEFF` / `\u00A0` 等零宽字符
+- **`prevCursorY!` 非空断言** —— 改为 `prevCursorX !== null && prevCursorY !== null` 双重检查
+- **`isScrolling` 全局变量 → getter 去竞态** —— 移除独立 `isScrolling` 布尔和 100ms 延迟置 false 的定时器，改用 `pendingScroll !== null` 推断动画状态，消除 `checkAndScroll` 在动画结束到定时器触发间的竞态窗口（P1）
+- **`boundary.ts` 嵌套回退路径 dead code** —— `isInScroll && isInEditor` 恒为 false（因为进入此分支时 `isInEditor` 恒为 false），改为仅基于 `isInScroll` 判定，使嵌套滚动容器内的光标能正常显示（P1）
+- **`animateBlockShift` FLIP 防重入** —— 引入 `activeFLIPTimer` 跟踪当前 cleanup 定时器，新调用时取消前一轮，防止连续 Enter 时覆盖 transform 后又被旧 cleanup 清空（P2）
+- **`bindScrollContainerEvents` 滚动容器泄漏修复** —— 新增已绑定容器的残留清理逻辑：将当前祖先链与 `scrollEventBindings` 对比，移除不再属于祖先链的容器和 handler（P2）
+- **`popoverDragBinding` 陈旧绑定修复** —— 弹窗关闭后绑定残留导致新弹窗无法重新绑定；新增 `isConnected` 检测，旧弹窗脱离时自动拆绑（P2）
+- **标题区域 typewriter 支持** —— `boundary.ts` 返回 `.protyle-title__input` 时附带最近的 `.protyle-content` rect 作为 `editorRect`，使 typewriter 对标题区域生效（P2）
+- **`visualWeightOf` 性能优化** —— 接受可选的 `cachedEditorRect` 参数，避免每块两次 `getBoundingClientRect`（200 块场景从 400 次降为 1+N 次 DOM 读）（P3）
+- **`applyRipple` 防排队** —— 引入 `rippleInProgress` 标志，与 `pendingFrame` 独立，防止 `getSentences` 在长段落上排队累积（P3）
+
+### Changed
+- **移除 typewriter debug 埋点** —— 删除 `dbg.setField` / `dbg.push` / `if (dbg.isEnabled())` 全部调用、`Debug` import 与 `src/utils/debug.ts`（无其他消费者）；改为按需提供控制台片段调试
+- **移除 inputMode 死代码** —— 删除从未被调用的 5 个导出（`simulateFocusInput` / `simulateTypewriterInput` / `disableFocus` / `disableTypewriter` / `isEitherActive`，4 命令重构遗留）
+- **删除实验性 typewriter 变体** —— `typewriter-a/b/c.ts` 三个未跟踪、未导入、未提交的副本
+
+### 已知 TODO（待定）
+- **`isScrolling` cooldown 移除的回归风险** —— 100ms cooldown 已移除，maxScroll 边界连续打字可能触发空转 rAF；待用户复现后决定是否加 clamp 检测短路或最小 cooldown
 
 ---
 
@@ -58,7 +84,7 @@ Branch: `fix/v2.2.0-cursor-optimization`（8 commits ahead of v2.2.0，尚未发
 - **rAF debounce `scheduleCheck`**（`fcfbf95`）—— 一次按键触发 4-5 个事件合并为 1 次 `checkAndScroll`
 - **container 缓存 `cachedContainer`**（`fcfbf95`）—— 避免每次 DOM 遍历找滚动祖先
 - **动画续接**（`fcfbf95`）—— 同一 target 追加 deltaY，连续输入不卡顿重启动画
-- **距离分档时长**（`fcfbf95`）—— `120/180/260/360/500ms` 五档（v2.3.0 移到 config）
+- **距离分档时长**（`fcfbf95`）—— `180/260/360/480/600ms` 五档（v2.3.0 移到 config）
 - **smoothScroll 改用 scrollable ancestor**（`2f9c39a`）—— 不再用 `getEditorContainer()`，找最近的滚动祖先
 - **删除高亮条 DOM/CSS**（`1229f45`，Q1 永久下线）—— 用户偏好"纯滚动"，入口保留 `TYPEWRITER_HIGHLIGHT_RESERVED` 注释块
 - **同步 typewriter 修复计划文档**（`9fd31c2`）—— 漂移后重新对齐
