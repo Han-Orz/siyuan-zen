@@ -24,16 +24,7 @@ import { shouldPauseFocusAndTypewriter } from "../utils/edgeCases";
 import { RIPPLE_CONFIG } from "../config";
 import * as inputMode from "./inputMode";
 
-const { SENTENCE_LEVELS, DEPTH_FACTOR, WEIGHT_MIN } = RIPPLE_CONFIG;
-
-const RIPPLE_TARGET_BLOCK_TYPES = new Set([
-  "NodeParagraph", "NodeHeading", "NodeListItem", "NodeBlockquote",
-]);
-const RIPPLE_SKIP_BLOCK_TYPES = new Set([
-  "NodeCodeBlock", "NodeBlockQueryEmbed", "NodeAttributeView",
-  "NodeTable", "NodeMathBlock", "NodeSuperBlock",
-]);
-const RIPPLE_SKIP_SELECTORS = [".av", ".av__mask", "code", "pre"];
+const { BLOCK_LEVELS, SENTENCE_DIM_ALPHA, TRANSITION_SEC, WEIGHT_MIN } = RIPPLE_CONFIG;
 
 /** CSS Custom Highlight API 注册名。 */
 const SENTENCE_DIM_HIGHLIGHT = "zt-sentence-dim";
@@ -46,31 +37,22 @@ let eventListeners: Array<[string, EventListener]> = [];
 const modifiedBlocks = new Set<HTMLElement>();
 let unsubInputMode: (() => void) | null = null;
 
+// P0-3: 块级 opacity 缓存——同一顶层块 + 无滚动 + 无块增删时跳过整个 applyBlockOpacity。
+// containerTop（rect.top）捕获祖先滚动；scrollTop 捕获 container 自身滚动。
+let lastBlockOpacityBlockId: string | null = null;
+let lastBlockOpacityContainerTop: number | null = null;
+let lastBlockOpacityScrollTop: number | null = null;
+let lastBlockOpacityChildCount: number | null = null;
+
+// P1-2: 句级 dim 色 CSS 变量仅在 OFF→ON 或主题切换时设置，避免每帧重写。
+let rippleColorActive = false;
+let lastThemeMode: string | null = null;
+
 // --- Block helpers ---
 
 function getCurrentBlock(): HTMLElement | null {
   const cursor = getCursorElement();
   return (cursor?.closest("[data-node-id]") as HTMLElement) ?? null;
-}
-
-function isRippleTargetBlock(block: HTMLElement): boolean {
-  const type = block.dataset?.type;
-  if (!type) return false;
-  if (RIPPLE_SKIP_BLOCK_TYPES.has(type)) return false;
-  if (!RIPPLE_TARGET_BLOCK_TYPES.has(type)) return false;
-  if (RIPPLE_SKIP_SELECTORS.some((sel) => !!block.closest(sel))) return false;
-  return true;
-}
-
-function depthOf(block: HTMLElement): number {
-  let depth = 0;
-  let el: HTMLElement | null = block;
-  while (el && el !== document.body) {
-    const st = el.dataset?.subtype;
-    if (st === "o" || st === "t" || st === "u") depth++;
-    el = el.parentElement;
-  }
-  return depth;
 }
 
 function visualWeightOf(block: HTMLElement, editorRect: DOMRect): number {
@@ -99,26 +81,44 @@ function pickClosestTextNode(container: Node, offset: number): { textNode: Text;
   return null;
 }
 
-/** Forward DOM walk to find the Text node containing global charOffset. */
-function findCurrentTextNodeAt(root: HTMLElement, charOffset: number): { node: Text; localOffset: number } | null {
+type TextNodeEntry = { node: Text; start: number; len: number };
+
+/** Single forward TreeWalker pass — collects all text nodes with cumulative offsets. */
+function buildTextNodeMap(root: HTMLElement): TextNodeEntry[] {
+  const map: TextNodeEntry[] = [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let consumed = 0;
-  let lastNode: Text | null = null;
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    const len = node.nodeValue?.length ?? 0;
-    if (charOffset < consumed + len) return { node, localOffset: charOffset - consumed };
-    lastNode = node;
+  let n: Text | null;
+  while ((n = walker.nextNode() as Text | null)) {
+    const len = n.nodeValue?.length ?? 0;
+    map.push({ node: n, start: consumed, len });
     consumed += len;
   }
-  if (lastNode && charOffset === consumed) {
-    return { node: lastNode, localOffset: lastNode.nodeValue?.length ?? 0 };
+  return map;
+}
+
+/** Resolve a global char offset to a Text node + local offset via binary search on the map. */
+function resolveTextNodeAt(map: TextNodeEntry[], charOffset: number): { node: Text; localOffset: number } | null {
+  const n = map.length;
+  if (n === 0) return null;
+  const last = map[n - 1];
+  const total = last.start + last.len;
+  if (charOffset >= total) {
+    return charOffset === total ? { node: last.node, localOffset: last.len } : null;
   }
-  return null;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (map[mid].start + map[mid].len > charOffset) hi = mid;
+    else lo = mid + 1;
+  }
+  const e = map[lo];
+  return { node: e.node, localOffset: charOffset - e.start };
 }
 
 /** Get the caret's global character offset within root. Returns null if caret is not within root. */
-function getCaretOffset(root: HTMLElement): number | null {
+function getCaretOffset(root: HTMLElement, textNodeMap?: TextNodeEntry[]): number | null {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return null;
   const range = sel.getRangeAt(0);
@@ -127,35 +127,62 @@ function getCaretOffset(root: HTMLElement): number | null {
   const resolved = pickClosestTextNode(range.startContainer, range.startOffset);
   if (!resolved) return null;
 
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let consumed = 0;
-  let n: Text | null;
-  while ((n = walker.nextNode() as Text | null)) {
-    if (n === resolved.textNode) return consumed + resolved.offset;
-    consumed += n.nodeValue?.length ?? 0;
+  const map = textNodeMap ?? buildTextNodeMap(root);
+  for (const entry of map) {
+    if (entry.node === resolved.textNode) return entry.start + resolved.offset;
   }
   return null;
 }
 
 // --- Sentence highlight (CSS Custom Highlight API) ---
 
+// Cache for same-sentence short-circuit: selectionchange fires on cursor movement
+// (arrow keys / clicks) without text changes — dim ranges are identical, skip rebuild.
+let lastDimBlockId: string | null = null;
+let lastDimText = "";
+let lastCaretSentenceRange: { start: number; end: number } | null = null;
+let lastHadDimRanges = false;
+let lastDimFirstNode: Text | null = null;
+
 /**
  * Apply sentence-level dimming via CSS Custom Highlight API.
  * Zero DOM mutation — builds Range objects on existing text nodes and registers
  * them in CSS.highlights. SiYuan's input/transaction handlers are unaffected.
  */
-function applySentenceHighlight(block: HTMLElement, caretOffset: number): void {
+function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNodeMap: TextNodeEntry[]): void {
   if (!("highlights" in CSS)) return; // CSS Custom Highlight API not supported
 
   const text = block.textContent ?? "";
   if (!text) {
     CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+    lastHadDimRanges = false;
+    lastDimFirstNode = null;
     return;
   }
 
-  // Split by sentence-ending punctuation
+  const blockId = block.dataset?.nodeId ?? null;
+
+  // Short-circuit: cursor moved within the same sentence of the same block (no text change).
+  // has() catches external Highlight clears (clearAll / destroyRipple); contains() catches
+  // DOM restructuring with identical textContent (SiYuan block re-render).
+  if (
+    blockId !== null &&
+    blockId === lastDimBlockId &&
+    text === lastDimText &&
+    lastCaretSentenceRange !== null &&
+    lastDimFirstNode !== null &&
+    block.contains(lastDimFirstNode) &&
+    caretOffset >= lastCaretSentenceRange.start &&
+    caretOffset <= lastCaretSentenceRange.end &&
+    (!lastHadDimRanges || CSS.highlights.has(SENTENCE_DIM_HIGHLIGHT))
+  ) {
+    return;
+  }
+
+  // Split by sentence-ending punctuation (含中文省略号 …)。
+  // 跳过数字间的英文句点（小数点 3.14 不分割）：lookbehind/lookahead 排除 \d.\d。
   const matches: Array<{ start: number; end: number }> = [];
-  const pattern = /[.?!。？！]+/g;
+  const pattern = /(?<!\d)[.?!。？！…]+(?!\d)/g;
   let lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(text)) !== null) {
@@ -168,12 +195,16 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number): void {
   if (matches.length === 0) matches.push({ start: 0, end: text.length });
 
   // Build Ranges for all sentences EXCEPT the current one (the one containing the caret)
+  let caretRange: { start: number; end: number } | null = null;
   const dimRanges: Range[] = [];
   for (const { start, end } of matches) {
-    if (caretOffset >= start && caretOffset <= end) continue;
+    if (caretOffset >= start && caretOffset <= end) {
+      caretRange = { start, end };
+      continue;
+    }
 
-    const startLoc = findCurrentTextNodeAt(block, start);
-    const endLoc = findCurrentTextNodeAt(block, end);
+    const startLoc = resolveTextNodeAt(textNodeMap, start);
+    const endLoc = resolveTextNodeAt(textNodeMap, end);
     if (!startLoc || !endLoc) continue;
 
     try {
@@ -189,40 +220,111 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number): void {
   } else {
     CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
   }
+
+  // Update cache
+  lastDimBlockId = blockId;
+  lastDimText = text;
+  lastCaretSentenceRange = caretRange;
+  lastHadDimRanges = dimRanges.length > 0;
+  lastDimFirstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
 }
+
+/**
+ * 备用：双引号内容作为独立句分割（未启用）。
+ * 引号内内容（不管有无句号）算一句，引号外按标点分割。
+ * 如需启用，在 applySentenceHighlight 里用此函数替换 matches 构建逻辑。
+ *
+ * 示例："你好"世界。 → ["你好"", "世界。"]
+ *       他说"去吗"。 → ["他说", ""去吗"", "。"]
+ */
+// function splitSentencesWithQuotes(text: string): Array<{ start: number; end: number }> {
+//   const matches: Array<{ start: number; end: number }> = [];
+//   const pattern = /[""][^""]*[""]|[.?!。？！…]+/g;
+//   let lastIndex = 0;
+//   let m: RegExpExecArray | null;
+//   while ((m = pattern.exec(text)) !== null) {
+//     const isQuote = m[0].charAt(0) === '"' || m[0].charAt(0) === '"';
+//     const end = m.index + m[0].length;
+//     if (isQuote) {
+//       if (m.index > lastIndex) matches.push({ start: lastIndex, end: m.index });
+//       matches.push({ start: m.index, end });
+//       lastIndex = end;
+//     } else {
+//       if (end <= lastIndex) continue;
+//       matches.push({ start: lastIndex, end });
+//       lastIndex = end;
+//     }
+//   }
+//   if (lastIndex < text.length) matches.push({ start: lastIndex, end: text.length });
+//   if (matches.length === 0) matches.push({ start: 0, end: text.length });
+//   return matches;
+// }
 
 // --- Block-level opacity ---
 
 function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): void {
-  const currentParent = currentBlock.parentElement;
-  const indexMap = new Map<Element, number>();
-  let fromIndex = 0;
-  if (currentParent) {
-    Array.from(currentParent.children).forEach((el, i) => {
-      indexMap.set(el, i);
-      if (el === currentBlock) fromIndex = i;
-    });
+  // 找 currentBlock 的顶层块（container 的直接子级）。
+  // 嵌套块（列表项、列表内段落等）不单独设 opacity，继承父级——
+  // 避免嵌套 opacity 叠加（父 0.5 × 子 0.5 = 0.25 不可见）。
+  let topBlock: HTMLElement = currentBlock;
+  let parent: HTMLElement | null = currentBlock.parentElement;
+  while (parent && parent !== container) {
+    topBlock = parent;
+    parent = parent.parentElement;
   }
 
-  const allBlocks = container.querySelectorAll<HTMLElement>('[data-node-id], iframe, video');
   const editorRect = container.getBoundingClientRect();
+  const blockId = topBlock.dataset?.nodeId ?? null;
+  const containerTop = Math.round(editorRect.top);
+  const scrollTop = container.scrollTop;
+  const childCount = container.childElementCount;
 
-  allBlocks.forEach((block) => {
-    if (!isRippleTargetBlock(block)) return;
-    const toIndex = indexMap.get(block);
-    const distance = toIndex === undefined ? fromIndex + 1 : Math.abs(fromIndex - toIndex);
-    const baseLevel = SENTENCE_LEVELS[Math.min(distance, SENTENCE_LEVELS.length - 1)];
-    const weight = visualWeightOf(block, editorRect);
-    const weightFactor = WEIGHT_MIN + weight * (1 - WEIGHT_MIN);
-    const depthFactor = Math.max(0.7, 1.0 - depthOf(block) * DEPTH_FACTOR);
-    // TODO(DESIGN.md §4.1): 嵌入块 dimming 未生效——isRippleTargetBlock 排除了
-    // iframe/video/NodeIFrame/NodeVideo/NodePDF/NodeBlockQueryEmbed，需重构 applyBlockOpacity
-    // 让 embed 块进入处理后再恢复 EMBED_MULTIPLIER 乘数。
-    block.style.opacity = String(baseLevel * weightFactor * depthFactor);
-    modifiedBlocks.add(block);
+  // P0-3: 同一顶层块 + 无滚动 + 无块增删 → distance/weight/opacity 与上一帧完全相同，跳过。
+  if (
+    blockId !== null &&
+    blockId === lastBlockOpacityBlockId &&
+    containerTop === lastBlockOpacityContainerTop &&
+    scrollTop === lastBlockOpacityScrollTop &&
+    childCount === lastBlockOpacityChildCount
+  ) {
+    return;
+  }
+
+  // 只遍历 container 的直接子级（顶层块），不 querySelectorAll 嵌套块。
+  const siblings = Array.from(container.children) as HTMLElement[];
+  const fromIndex = siblings.indexOf(topBlock);
+  if (fromIndex === -1) return;
+
+  // 缓存仅在成功应用后更新——fromIndex===-1 时不缓存，下次重试。
+  lastBlockOpacityBlockId = blockId;
+  lastBlockOpacityContainerTop = containerTop;
+  lastBlockOpacityScrollTop = scrollTop;
+  lastBlockOpacityChildCount = childCount;
+
+  const newBlocks = new Set<HTMLElement>();
+
+  siblings.forEach((block, i) => {
+    if (!block.hasAttribute("data-node-id")) return; // 跳过非块元素
+    const distance = Math.abs(fromIndex - i);
+    const baseLevel = BLOCK_LEVELS[Math.min(distance, BLOCK_LEVELS.length - 1)];
+    // P1-1: distance≥2 的远块 weight 差异不可感知，跳过 getBoundingClientRect。
+    const weightFactor = distance >= 2
+      ? 1.0
+      : WEIGHT_MIN + visualWeightOf(block, editorRect) * (1 - WEIGHT_MIN);
+    block.style.transition = `opacity ${TRANSITION_SEC}s ease`;
+    block.style.opacity = String(baseLevel * weightFactor);
+    newBlocks.add(block);
   });
 
-  if (isRippleTargetBlock(currentBlock)) currentBlock.style.opacity = "1";
+  // 不在新列表里的旧块：清 opacity（transition 仍在，淡出到 1）
+  modifiedBlocks.forEach((block) => {
+    if (block.isConnected && !newBlocks.has(block)) {
+      block.style.opacity = "";
+    }
+  });
+
+  modifiedBlocks.clear();
+  newBlocks.forEach((b) => modifiedBlocks.add(b));
 }
 
 // --- Main apply ---
@@ -243,11 +345,24 @@ function applyRipple(): void {
     const container = currentBlock.closest(".protyle-wysiwyg") as HTMLElement | null;
     if (!container) return;
 
+    // 句级 dim color：仅在 OFF→ON 或主题切换时设 CSS 变量（避免每帧重写）。
+    const themeMode = document.documentElement.getAttribute("data-theme-mode");
+    if (!rippleColorActive || themeMode !== lastThemeMode) {
+      const dimRgb = themeMode === "dark" ? "255,255,255" : "0,0,0";
+      document.documentElement.style.setProperty(
+        "--zt-sentence-dim-color",
+        `rgba(${dimRgb},${SENTENCE_DIM_ALPHA})`,
+      );
+      rippleColorActive = true;
+      lastThemeMode = themeMode;
+    }
+
     applyBlockOpacity(container, currentBlock);
 
-    const caretOffset = getCaretOffset(currentBlock);
+    const textNodeMap = buildTextNodeMap(currentBlock);
+    const caretOffset = getCaretOffset(currentBlock, textNodeMap);
     if (caretOffset !== null) {
-      applySentenceHighlight(currentBlock, caretOffset);
+      applySentenceHighlight(currentBlock, caretOffset, textNodeMap);
     } else if ("highlights" in CSS) {
       CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
     }
@@ -255,9 +370,18 @@ function applyRipple(): void {
 }
 
 function clearAll(): void {
-  modifiedBlocks.forEach((block) => { block.style.opacity = ""; });
-  modifiedBlocks.clear();
+  // 清 opacity 但不清 transition / modifiedBlocks——
+  // transition 保留让淡出有动画；modifiedBlocks 保留供下次 applyBlockOpacity 交替。
+  modifiedBlocks.forEach((block) => {
+    if (block.isConnected) block.style.opacity = "";
+  });
   if ("highlights" in CSS) CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+  // 重置缓存：视觉状态已清，下次 apply 必须重建。
+  lastBlockOpacityBlockId = null;
+  lastBlockOpacityContainerTop = null;
+  lastBlockOpacityScrollTop = null;
+  lastBlockOpacityChildCount = null;
+  rippleColorActive = false;
 }
 
 // --- Lifecycle ---
@@ -301,4 +425,13 @@ export function destroyRipple(): void {
   }
 
   clearAll();
+
+  // clearAll 只清 opacity（保留淡出动画），destroy 时彻底清 transition + modifiedBlocks
+  modifiedBlocks.forEach((block) => {
+    if (block.isConnected) {
+      block.style.transition = "";
+      block.style.opacity = "";
+    }
+  });
+  modifiedBlocks.clear();
 }

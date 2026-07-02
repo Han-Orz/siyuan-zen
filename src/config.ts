@@ -50,13 +50,15 @@ export const TYPEWRITER_CONFIG = {
 
 /** 涟漪聚焦参数（按块距离衰减 opacity）。 */
 export const RIPPLE_CONFIG = {
-  /** v2.3.0：句级 / 块级 opacity 梯度（5 档）。 */
-  SENTENCE_LEVELS: [1.0, 0.88, 0.72, 0.55, 0.42] as const,
-  /** v2.3.0：嵌入块基础值 × 此系数（TODO: 区分不同块类型）。 */
-  EMBED_MULTIPLIER: 0.85,
-  /** v2.3.0：列表深度每层 opacity × (1 - DEPTH_FACTOR)，最低 0.7。 */
-  DEPTH_FACTOR: 0.05,
-  /** v2.3.0：视觉权重下限（lerp 起点）。 */
+  /** 块级 opacity 梯度（按距离衰减）。distance 0=当前块, 1=相邻, 2+=远处。
+   *  参考 obsidian focus 模式：1 → 0.4 → 0.2 → 0.15 → 0.1 → 0.05。 */
+  BLOCK_LEVELS: [1.0, 0.4, 0.2, 0.15, 0.1, 0.05] as const,
+  /** 句级 dimming 强度（当前块内非当前句的 color alpha，0-1）。
+   *  ::highlight 不支持 opacity，用 rgba color 模拟。当前句=1（无 highlight）。 */
+  SENTENCE_DIM_ALPHA: 0.7,
+  /** 块级 opacity 过渡时长（秒），让 dimming 变化自然。0 = 无过渡。 */
+  TRANSITION_SEC: 0.4,
+  /** 视觉权重下限（lerp 起点）。视口外的块额外 dim 到此倍数。 */
   WEIGHT_MIN: 0.85,
 } as const;
 

@@ -52,7 +52,7 @@ When you drag-select text, ripple focus and typewriter mode gracefully fade out 
 
 Read-only mode and block popups automatically suspend typewriter mode. Ripple focus switches to mouse-centered mode in read-only.
 
-## Customization (v2.5.0)
+## Customization (v2.6.0)
 
 Open `src/config.ts` to tweak:
 
@@ -76,7 +76,7 @@ Open `src/styles/index.scss` to tweak visual style:
 
 `pnpm run dev` rebuilds on save; SiYuan hot-reloads in 1-2 seconds.
 
-### Edge Behavior (v2.5.0)
+### Edge Behavior (v2.6.0)
 
 When the cursor scrolls off the visible editor area (top or bottom), it stays at the last visible position and smoothly fades to 0 opacity over `EDGE_FADE.ZONE` pixels. Returning to the viewport fades it back in. Top and bottom are now symmetric.
 
