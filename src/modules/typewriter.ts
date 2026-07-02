@@ -210,7 +210,12 @@ function checkAndScroll(): void {
       && !cursorBlock.querySelector(
         'img, iframe, [data-type^="NodeMathBlock"], [data-type^="NodeCodeBlock"]',
       );
-    if (isEmptyBlock) return;
+    if (isEmptyBlock) {
+      // 空块时清除 lastCheckRect，使下次（首字符）checkAndScroll 的 prevY=undefined
+      // 避免 |firstCharY - emptyBlockY| > 3 触发 defer 级联导致滚动丢失（TODO-6）
+      lastCheckRect = null;
+      return;
+    }
   }
 
   // 缓存命中：同一 cursorElement 复用上次的 scroll container，避免每次都 DOM 遍历

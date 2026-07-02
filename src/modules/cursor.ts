@@ -62,7 +62,7 @@ function markKeyboardPending(): void {
   keyboardCooldownTimer = setTimeout(() => {
     pendingKeyboardUpdate = false;
     keyboardCooldownTimer = null;
-  }, 150);
+  }, 300);
 }
 
 /**
