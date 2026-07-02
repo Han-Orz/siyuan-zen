@@ -82,11 +82,11 @@ if (isWatch) {
 
 function packageZip() {
   const archiver = require('archiver');
-  const output = fs.createWriteStream('zentype.zip');
+  const output = fs.createWriteStream('package.zip');
   const archive = archiver('zip', { zlib: { level: 9 } });
 
   output.on('close', () => {
-    console.log(`Created zentype.zip (${archive.pointer()} bytes)`);
+    console.log(`Created package.zip (${archive.pointer()} bytes)`);
   });
 
   archive.on('warning', (err) => {

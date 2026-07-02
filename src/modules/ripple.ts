@@ -1,29 +1,30 @@
 ﻿/**
- * 涟漪聚焦模块 (Ripple Focus) — v2.3.1 重写
+ * 涟漪聚焦模块 (Ripple Focus) — v2.5.0 重写 (CSS Custom Highlight API)
  *
  * 效果（DESIGN.md §4.1）：
- *   当前输入句 opacity = 1.0，当前块其他句 = 0.88
+ *   当前输入句 opacity = 1.0，当前块其他句 = 0.88（用 CSS Highlight color 模拟）
  *   相邻块按距离 5 档衰减 [0.72, 0.55, 0.42]
- *   嵌入块 x0.85，列表块按视觉权重 x 深度系数修正
+ *   列表块按视觉权重 x 深度系数修正
  *
  * 设计要点：
- *   - 句级粒度：按 .?!。？！ 切句，临时 span 标记（extractContents + insertNode）
- *   - JS 直接 style.opacity，不注入 CSS
+ *   - 句级粒度：按 .?!。？！ 切句，用 CSS Custom Highlight API 标记（零 DOM 突变）
+ *   - 块级粒度：JS 直接 style.opacity
  *   - 默认 OFF，输入后 ON（inputMode.setBothOn 触发）
- *   - 暂停：选中 / 悬浮窗 -> 清除所有 opacity 覆盖
- *   - span 缓存：块未变且文本未变时复用上次 span，避免每次 selectionchange 重建 DOM
- *   - 单事件驱动：仅 selectionchange
+ *   - 暂停：选中 / 悬浮窗 -> 清除所有 opacity 覆盖 + Highlight
+ *   - 单事件驱动：selectionchange + inputMode 订阅
+ *
+ * v2.5.0 变更：废弃 span 包裹（extractContents + insertNode），改用 CSS Custom Highlight API。
+ *   原因：span 包裹分裂文本节点，SiYuan 的 input/transaction 处理器在突变后重新查选区时
+ *   选区语义改变 → 光标飘走 + 内容丢失。Highlight API 不修改 DOM，彻底消除此冲突。
+ *   trade-off：::highlight 不支持 opacity，句级 dimming 用 color 模拟（对纯文字视觉等效）。
  */
 
 import { getCursorElement } from "../utils/getCursorElement";
-import { getCursorRect } from "../utils/getCursorRect";
 import { shouldPauseFocusAndTypewriter } from "../utils/edgeCases";
 import { RIPPLE_CONFIG } from "../config";
 import * as inputMode from "./inputMode";
 
-const { SENTENCE_LEVELS, EMBED_MULTIPLIER, DEPTH_FACTOR, WEIGHT_MIN } = RIPPLE_CONFIG;
-
-const SENTENCE_SPAN_CLASS = "zt-sentence-span";
+const { SENTENCE_LEVELS, DEPTH_FACTOR, WEIGHT_MIN } = RIPPLE_CONFIG;
 
 const RIPPLE_TARGET_BLOCK_TYPES = new Set([
   "NodeParagraph", "NodeHeading", "NodeListItem", "NodeBlockquote",
@@ -34,17 +35,16 @@ const RIPPLE_SKIP_BLOCK_TYPES = new Set([
 ]);
 const RIPPLE_SKIP_SELECTORS = [".av", ".av__mask", "code", "pre"];
 
+/** CSS Custom Highlight API 注册名。 */
+const SENTENCE_DIM_HIGHLIGHT = "zt-sentence-dim";
+
 // --- State ---
 
 let active = false;
 let pendingFrame: number | null = null;
 let eventListeners: Array<[string, EventListener]> = [];
 const modifiedBlocks = new Set<HTMLElement>();
-
-// Span cache: rebuild only when block or text changes
-let cachedBlock: HTMLElement | null = null;
-let cachedText = "";
-let cachedSpans: HTMLElement[] = [];
+let unsubInputMode: (() => void) | null = null;
 
 // --- Block helpers ---
 
@@ -60,13 +60,6 @@ function isRippleTargetBlock(block: HTMLElement): boolean {
   if (!RIPPLE_TARGET_BLOCK_TYPES.has(type)) return false;
   if (RIPPLE_SKIP_SELECTORS.some((sel) => !!block.closest(sel))) return false;
   return true;
-}
-
-function isEmbedBlock(block: Element): boolean {
-  const tag = block.tagName?.toLowerCase();
-  if (tag === "iframe" || tag === "video") return true;
-  const dt = (block as HTMLElement).dataset?.type;
-  return dt === "NodeIFrame" || dt === "NodeVideo" || dt === "NodePDF" || dt === "NodeBlockQueryEmbed";
 }
 
 function depthOf(block: HTMLElement): number {
@@ -87,31 +80,21 @@ function visualWeightOf(block: HTMLElement, editorRect: DOMRect): number {
   return Math.max(0, Math.min(1, Math.max(0, visBot - visTop) / (editorRect.height || 1)));
 }
 
-// --- Selection save / restore ---
+// --- Caret offset helpers ---
 
-function saveSelection(): Range | null {
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return null;
-  try { return sel.getRangeAt(0).cloneRange(); } catch { return null; }
-}
-
-function restoreSelection(saved: Range | null): void {
-  if (!saved) return;
-  const sel = window.getSelection();
-  if (!sel) return;
-  try { sel.removeAllRanges(); sel.addRange(saved); } catch { /* range invalid */ }
-}
-
-// --- Sentence parsing ---
-
-/** Walk up from textNode to find first [data-node-id] ancestor. */
-function getSentenceRoot(textNode: Node): HTMLElement | null {
-  let el: Node | null = textNode;
-  while (el && el !== document.body) {
-    if (el.nodeType === Node.ELEMENT_NODE && (el as HTMLElement).dataset?.nodeId) {
-      return el as HTMLElement;
-    }
-    el = el.parentNode;
+/** Normalize startContainer/startOffset to a Text node + character offset. */
+function pickClosestTextNode(container: Node, offset: number): { textNode: Text; offset: number } | null {
+  if (container.nodeType === Node.TEXT_NODE) {
+    const textNode = container as Text;
+    const len = textNode.nodeValue?.length ?? 0;
+    return { textNode, offset: Math.max(0, Math.min(len, offset)) };
+  }
+  if (container.nodeType === Node.ELEMENT_NODE) {
+    const el = container as Element;
+    const child = el.childNodes[offset] ?? el.lastChild ?? null;
+    if (!child) return null;
+    if (child.nodeType === Node.TEXT_NODE) return { textNode: child as Text, offset: 0 };
+    return pickClosestTextNode(child, 0);
   }
   return null;
 }
@@ -134,79 +117,40 @@ function findCurrentTextNodeAt(root: HTMLElement, charOffset: number): { node: T
   return null;
 }
 
-/** Wrap [start, end) in a temp span using extractContents + insertNode (avoids surroundContents BAD_BOUNDARYPOINTS_ERR). */
-function wrapTextRange(textNode: Text, start: number, end: number): HTMLSpanElement | null {
-  if (textNode.nodeType !== Node.TEXT_NODE) return null;
-  const len = textNode.nodeValue?.length ?? 0;
-  if (start < 0 || end > len || start >= end) return null;
-  const root = getSentenceRoot(textNode);
-  if (!root || !isRippleTargetBlock(root)) return null;
+/** Get the caret's global character offset within root. Returns null if caret is not within root. */
+function getCaretOffset(root: HTMLElement): number | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer)) return null;
 
-  const saved = saveSelection();
-  const span = document.createElement("span");
-  span.className = SENTENCE_SPAN_CLASS;
-  span.style.cssText = "visibility: hidden; pointer-events: none;";
+  const resolved = pickClosestTextNode(range.startContainer, range.startOffset);
+  if (!resolved) return null;
 
-  try {
-    const range = document.createRange();
-    range.setStart(textNode, start);
-    range.setEnd(textNode, end);
-    const fragment = range.extractContents();
-    span.appendChild(fragment);
-    try {
-      range.insertNode(span);
-    } catch {
-      while (span.firstChild) range.insertNode(span.firstChild);
-      restoreSelection(saved);
-      return null;
-    }
-    restoreSelection(saved);
-    return span;
-  } catch {
-    restoreSelection(saved);
-    return null;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let consumed = 0;
+  let n: Text | null;
+  while ((n = walker.nextNode() as Text | null)) {
+    if (n === resolved.textNode) return consumed + resolved.offset;
+    consumed += n.nodeValue?.length ?? 0;
   }
+  return null;
 }
 
-/** Remove all sentence spans from container, restoring original text structure. */
-function removeSentenceSpans(container: HTMLElement): void {
-  const spans = container.querySelectorAll<HTMLElement>(`.${SENTENCE_SPAN_CLASS}`);
-  if (spans.length === 0) return;
-  const saved = saveSelection();
-  spans.forEach((span) => {
-    const parent = span.parentNode;
-    if (!parent) return;
-    while (span.firstChild) parent.insertBefore(span.firstChild, span);
-    parent.removeChild(span);
-  });
-  restoreSelection(saved);
-}
+// --- Sentence highlight (CSS Custom Highlight API) ---
 
 /**
- * Build sentence spans for the current block, with caching.
- * Rebuilds ONLY when block changes or textContent changes.
- * On cache hit (same block + same text), returns previous spans without DOM mutation.
+ * Apply sentence-level dimming via CSS Custom Highlight API.
+ * Zero DOM mutation — builds Range objects on existing text nodes and registers
+ * them in CSS.highlights. SiYuan's input/transaction handlers are unaffected.
  */
-function buildSentences(block: HTMLElement): HTMLElement[] {
+function applySentenceHighlight(block: HTMLElement, caretOffset: number): void {
+  if (!("highlights" in CSS)) return; // CSS Custom Highlight API not supported
+
   const text = block.textContent ?? "";
-
-  // Cache hit: same block, same text -> reuse
-  if (block === cachedBlock && text === cachedText) {
-    return cachedSpans;
-  }
-
-  // Cache miss: clean old block's spans
-  if (cachedBlock && cachedBlock !== block) {
-    removeSentenceSpans(cachedBlock);
-  }
-  // Also clean current block (stale spans from previous cycle)
-  removeSentenceSpans(block);
-
-  if (!text || !isRippleTargetBlock(block)) {
-    cachedBlock = block;
-    cachedText = text;
-    cachedSpans = [];
-    return [];
+  if (!text) {
+    CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+    return;
   }
 
   // Split by sentence-ending punctuation
@@ -223,76 +167,28 @@ function buildSentences(block: HTMLElement): HTMLElement[] {
   if (lastIndex < text.length) matches.push({ start: lastIndex, end: text.length });
   if (matches.length === 0) matches.push({ start: 0, end: text.length });
 
-  // Wrap each sentence — re-walk DOM each time to get live text node refs
-  const spans: HTMLElement[] = [];
-  const saved = saveSelection();
+  // Build Ranges for all sentences EXCEPT the current one (the one containing the caret)
+  const dimRanges: Range[] = [];
   for (const { start, end } of matches) {
+    if (caretOffset >= start && caretOffset <= end) continue;
+
     const startLoc = findCurrentTextNodeAt(block, start);
     const endLoc = findCurrentTextNodeAt(block, end);
     if (!startLoc || !endLoc) continue;
-    if (startLoc.node !== endLoc.node) continue;
-    const span = wrapTextRange(startLoc.node, startLoc.localOffset, endLoc.localOffset);
-    if (span) spans.push(span);
-  }
-  restoreSelection(saved);
 
-  // Reveal spans (switch from hidden to visible so opacity takes effect)
-  spans.forEach((s) => (s.style.visibility = "visible"));
-
-  cachedBlock = block;
-  cachedText = text;
-  cachedSpans = spans;
-  return spans;
-}
-
-/** Normalize startContainer/startOffset to a Text node + character offset. */
-function pickClosestTextNode(container: Node, offset: number): { textNode: Text; offset: number } | null {
-  if (container.nodeType === Node.TEXT_NODE) {
-    const textNode = container as Text;
-    const len = textNode.nodeValue?.length ?? 0;
-    return { textNode, offset: Math.max(0, Math.min(len, offset)) };
-  }
-  if (container.nodeType === Node.ELEMENT_NODE) {
-    const el = container as Element;
-    const child = el.childNodes[offset] ?? el.lastChild ?? null;
-    if (!child) return null;
-    if (child.nodeType === Node.TEXT_NODE) return { textNode: child as Text, offset: 0 };
-    return pickClosestTextNode(child, 0);
-  }
-  return null;
-}
-
-/** Find the .zt-sentence-span containing the cursor, via caretRangeFromPoint or selection fallback. */
-function findCurrentSentence(
-  container: HTMLElement,
-  cursorRect: { x: number; y: number; height: number } | null,
-): HTMLElement | null {
-  let textNode: Text | null = null;
-
-  if (cursorRect && typeof document.caretRangeFromPoint === "function") {
     try {
-      const x = cursorRect.x;
-      const y = cursorRect.y + cursorRect.height / 2;
-      const pointRange = document.caretRangeFromPoint(x, y);
-      if (pointRange) {
-        const resolved = pickClosestTextNode(pointRange.startContainer, pointRange.startOffset);
-        if (resolved) textNode = resolved.textNode;
-      }
-    } catch { /* fall through to selection-based detection */ }
+      const range = new Range();
+      range.setStart(startLoc.node, startLoc.localOffset);
+      range.setEnd(endLoc.node, endLoc.localOffset);
+      dimRanges.push(range);
+    } catch { /* skip invalid range */ }
   }
 
-  if (!textNode) {
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return null;
-    try {
-      const range = sel.getRangeAt(0);
-      const resolved = pickClosestTextNode(range.startContainer, range.startOffset);
-      if (resolved) textNode = resolved.textNode;
-    } catch { return null; }
+  if (dimRanges.length > 0) {
+    CSS.highlights.set(SENTENCE_DIM_HIGHLIGHT, new Highlight(...dimRanges));
+  } else {
+    CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
   }
-
-  if (!textNode || !container.contains(textNode)) return null;
-  return textNode.parentElement?.closest<HTMLElement>(`.${SENTENCE_SPAN_CLASS}`) ?? null;
 }
 
 // --- Block-level opacity ---
@@ -319,12 +215,14 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
     const weight = visualWeightOf(block, editorRect);
     const weightFactor = WEIGHT_MIN + weight * (1 - WEIGHT_MIN);
     const depthFactor = Math.max(0.7, 1.0 - depthOf(block) * DEPTH_FACTOR);
-    const embedMult = isEmbedBlock(block) ? EMBED_MULTIPLIER : 1;
-    block.style.opacity = String(baseLevel * weightFactor * depthFactor * embedMult);
+    // TODO(DESIGN.md §4.1): 嵌入块 dimming 未生效——isRippleTargetBlock 排除了
+    // iframe/video/NodeIFrame/NodeVideo/NodePDF/NodeBlockQueryEmbed，需重构 applyBlockOpacity
+    // 让 embed 块进入处理后再恢复 EMBED_MULTIPLIER 乘数。
+    block.style.opacity = String(baseLevel * weightFactor * depthFactor);
     modifiedBlocks.add(block);
   });
 
-  currentBlock.style.opacity = "1";
+  if (isRippleTargetBlock(currentBlock)) currentBlock.style.opacity = "1";
 }
 
 // --- Main apply ---
@@ -345,15 +243,13 @@ function applyRipple(): void {
     const container = currentBlock.closest(".protyle-wysiwyg") as HTMLElement | null;
     if (!container) return;
 
-    const spans = buildSentences(currentBlock);
     applyBlockOpacity(container, currentBlock);
 
-    const cursorRect = getCursorRect();
-    const currentSentence = findCurrentSentence(container, cursorRect);
-    if (spans.length > 0) {
-      spans.forEach((span) => {
-        span.style.opacity = span === currentSentence ? "1" : "0.88";
-      });
+    const caretOffset = getCaretOffset(currentBlock);
+    if (caretOffset !== null) {
+      applySentenceHighlight(currentBlock, caretOffset);
+    } else if ("highlights" in CSS) {
+      CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
     }
   });
 }
@@ -361,14 +257,7 @@ function applyRipple(): void {
 function clearAll(): void {
   modifiedBlocks.forEach((block) => { block.style.opacity = ""; });
   modifiedBlocks.clear();
-
-  document.querySelectorAll<HTMLElement>(".protyle-wysiwyg").forEach((container) => {
-    removeSentenceSpans(container);
-  });
-
-  cachedBlock = null;
-  cachedText = "";
-  cachedSpans = [];
+  if ("highlights" in CSS) CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
 }
 
 // --- Lifecycle ---
@@ -380,13 +269,16 @@ function onSelectionChange(): void {
 export function initRipple(): void {
   active = true;
   pendingFrame = null;
-  cachedBlock = null;
-  cachedText = "";
-  cachedSpans = [];
 
   const handler: EventListener = onSelectionChange;
   document.addEventListener("selectionchange", handler);
   eventListeners = [["selectionchange", handler]];
+
+  // P1-1: 订阅 inputMode。wheel/touchmove/blur/click 等退出事件不触发 selectionchange，
+  // 旧版仅靠 selectionchange → clearAll 会让 ripple opacity 在滚动/失焦后残留。
+  unsubInputMode = inputMode.subscribe((state) => {
+    if (!state.focusActive && active) clearAll();
+  });
 
   applyRipple();
 }
@@ -397,6 +289,11 @@ export function destroyRipple(): void {
     document.removeEventListener(event, handler);
   });
   eventListeners = [];
+
+  if (unsubInputMode) {
+    unsubInputMode();
+    unsubInputMode = null;
+  }
 
   if (pendingFrame !== null) {
     cancelAnimationFrame(pendingFrame);

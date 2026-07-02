@@ -1,4 +1,4 @@
-# zenType 设计文档（v2.2.1）
+# zenType 设计文档（v2.5.0）
 
 > **本文件合并自 `docs/FOCUS_TYPEWRITER_DESIGN.md`（已删除）+ 早期 `TODO.md`（已删除）的设计段。**
 > **代码即真相，本文档跟随代码，不是反过来。**
@@ -18,7 +18,7 @@
 
 **核心价值**：让用户进入"心流"状态 —— 不用低头找光标、不被周围段落干扰。
 **设计哲学**：聚焦是**主动行为**（用户主动输入或命令触发），不是默认状态（"禅"）。
-**当前版本**：v2.2.1（`package.json` / `plugin.json`）。
+**当前版本**：v2.5.0（`package.json` / `plugin.json`）。
 
 ---
 
@@ -447,10 +447,9 @@ function animateBlockShift(editor: HTMLElement): void {
 
 #### 3.7.5 与 ripple 的协作
 
-块级插入动画跑完后（约 300-500ms 后），由 ripple 模块接管：
-- `ripple.recompute(currentBlock)` 重新计算各块 opacity
-- 当前句 / 块 = 1.0
-- 邻近块按句级 / 块级 + 视觉权重 + 列表深度 + 嵌入块修正 综合计算
+块级插入动画跑完后，ripple 模块通过事件自动接管——typewriter 不再显式调用 ripple（v2.5.0 移除了 `ripple.recompute`，§4.3.6）：
+- Enter / Backspace 后光标移入新块 → 触发 `selectionchange` → `applyRipple` 重算
+- 当前句 / 块 = 1.0；邻近块按句级 / 块级 + 视觉权重 + 列表深度综合计算（嵌入块已被 `isRippleTargetBlock` 排除）
 
 §3 typewriter **不直接设 opacity**，opacity 完全交给 §4 ripple。
 
@@ -458,35 +457,32 @@ function animateBlockShift(editor: HTMLElement): void {
 
 ## 4. 涟漪聚焦 (Ripple Focus)
 
-### 4.1 想要的效果（v2.3.0 重写）
+### 4.1 想要的效果（v2.5.0 重写：CSS Custom Highlight API）
 
-- **当前输入句** opacity = 1.0（以 `.`、`?`、`!` 结尾切句，**句级**而非仅块级）
-- 当前块的其它句 opacity ≈ 0.88
+- **当前输入句**保持默认色（最亮）；当前块的**其它句**用 `::highlight(zt-sentence-dim)` 染色为 `color: rgba(0,0,0,0.88)`（浅色）/ `rgba(255,255,255,0.88)`（深色）——按 `.`、`?`、`!`、`。`、`？`、`！` 切句，**句级**而非仅块级
 - 相邻 ±1 块 opacity ≈ 0.72
 - 相邻 ±2 块 opacity ≈ 0.55
 - 相邻 ±3 块以外 opacity ≈ 0.42
-- **嵌入块**基础值 × 0.85（TODO: 区分不同的块类型，见 §4.6）
+- **块级** dimming 仍用 JS `style.opacity`；**句级** dimming 用 CSS Custom Highlight API（零 DOM 突变，§4.3.3）
+- **嵌入块**：`isRippleTargetBlock` 在进入块级计算前已排除 iframe/video/NodeIFrame/NodeVideo/NodePDF/NodeBlockQueryEmbed，`EMBED_MULTIPLIER`（config.ts:56）不再生效，保留作设计文档（TODO: 区分不同块类型，见 §4.6）
 - **列表块**走动态算法（Q5 = C，§4.3.4）：视觉权重（子项可见高度 / 视窗高度）× 列表深度系数
 - **默认 OFF** —— 打开文档看不到任何涟漪，必须先输入才出现（Q3 决策）
-- **暂停场景**：选中 / 悬浮窗 → 清除所有 opacity 覆盖，恢复默认
+- **暂停场景**：选中 / 悬浮窗 → `clearAll()` 清除所有块级 opacity 覆盖 + `CSS.highlights.delete`，恢复默认
 
 ### 4.2 关键决策
 
 | 决策 | 值 | 文件:行 | 理由 |
 |---|---|---|---|
 | **默认 OFF** | `focusActive = false` 启动 | `inputMode.ts:15` | Q3：聚焦是"主动行为"不是默认状态 |
-| **句级粒度**（v2.3.0 新增） | 按 `.?!` 切句 | `ripple.ts` 新增 `getSentences(block)` | 用户偏好"看清整句"，不只是块 |
+| **句级粒度**（v2.5.0 改 Highlight API） | 按 `.?!。？！` 切句 | `ripple.ts:147-192` `applySentenceHighlight` | 用户偏好"看清整句"，不只是块；v2.5.0 废弃 `getSentences`/span 包裹 |
 | **句级 / 块级 opacity 梯度** | `[1.0, 0.88, 0.72, 0.55, 0.42]` 5 档 | `config.ts` `RIPPLE_SENTENCE_LEVELS` | v2.3.0 新增，替换 v2.2.1 的 6 档块级 |
-| **嵌入块修正**（v2.3.0 新增） | × 0.85 | `config.ts` `RIPPLE_EMBED_MULTIPLIER` | 嵌入内容视觉权重低；TODO: 区分不同块类型 |
+| **嵌入块修正** | × 0.85（**死代码**） | `config.ts:56` `EMBED_MULTIPLIER` | `isRippleTargetBlock` 在乘数前已排除 embed 类型，乘数不生效；保留作设计文档（P2-5） |
 | **列表块算法**（v2.3.0 新增） | 视觉权重 × 深度系数 | `ripple.ts` 新增 `visualWeightOf` + `depthOf` | Q5 = C：动态算法匹配人眼感知 |
 | **深度系数衰减**（v2.3.0 新增） | 每深一层 × 0.95 | `config.ts` `RIPPLE_DEPTH_FACTOR` | 嵌套深的项视觉占比小 |
-| **应用方式** | JS 直接 `style.opacity` 不用 CSS class | `ripple.ts:86` | 简单直接，无样式注入问题 |
-| **渐淡单位** | `.protyle-wysiwyg [data-node-id]` + iframe/video | `ripple.ts:79-81` | 块级（含嵌入块），嵌套块 v1 简化方案（不递归） |
-| **重新计算接口**（v2.3.0 新增） | `ripple.recompute(focusBlock)` | `ripple.ts` 新增 | 块级插入后由 typewriter §3.7 调用 |
-| **mouse 模式** | **暂停**（类型保留，代码注释） | `ripple.ts:118-155` | Q3：用户暂未决定应用场景 |
-| **mouse throttle** | 100ms | `config.ts` `MOUSE_THROTTLE` | 保留配置值，未来恢复时直接用 |
-| **idle 阈值** | 2000ms | `config.ts` `IDLE_THRESHOLD` | 保留配置值，未来恢复时直接用 |
-| **滚动条忽略** | 视口边缘 20px 缓冲带 | `ripple.ts:49-54` | 滚动条上 mousemove 不切模式（mouse 模式重启后用） |
+| **应用方式** | 块级 `style.opacity`；句级 CSS Custom Highlight API | `ripple.ts:221` / `:188` | 块级简单直接；句级零 DOM 突变（v2.5.0，避免数据丢失） |
+| **渐淡单位** | `.protyle-wysiwyg [data-node-id]` + iframe/video | `ripple.ts:207` | 块级（嵌入块被 `isRippleTargetBlock` 排除，不参与 dimming）；嵌套块 v1 简化方案（不递归） |
+| **重新计算接口** | ~~`ripple.recompute`~~（v2.5.0 移除） | — | 块级插入后光标移入新块 → `selectionchange` → `applyRipple` 自动重算，无需显式调用（§4.3.6） |
+| **mouse 模式** | **已移除**（v2.5.0 重写时清理） | — | Q3：用户暂未决定应用场景。旧 `onMouseMove` / `MOUSE_THROTTLE` / `IDLE_THRESHOLD` / 滚动条缓冲随重写删除；未来恢复需重建（§4.4） |
 
 ### 4.3 代码实现逻辑
 
@@ -498,16 +494,12 @@ let mode: RippleMode = "text";   // "text" | "mouse" | "paused"
 
 `RippleMode` 类型（`types/index.ts:3`）保留 `"mouse"` 变体以备未来恢复时不破坏类型契约。
 
-#### 4.3.2 主循环（`ripple.ts:56-91`，v2.3.0 重构）
+#### 4.3.2 主循环（`ripple.ts:230-255` applyRipple + `196-226` applyBlockOpacity + `147-192` applySentenceHighlight，v2.5.0 重构）
 
 ```
 applyRipple():  // rAF 节流（pendingFrame 标志）
-  if (!inputMode.isFocusActive()):  // Q3：默认 OFF + 命令 disable 后
-    clearAllOpacity()  // 清除所有 opacity 覆盖
-    return
-
-  if (shouldPauseFocusAndTypewriter()):
-    clearAllOpacity()
+  if (!inputMode.isFocusActive() || shouldPauseFocusAndTypewriter()):
+    clearAll()  // 清块级 opacity + CSS.highlights.delete("zt-sentence-dim")
     return
 
   currentBlock = getCurrentBlock()  // 找到光标所在 [data-node-id]
@@ -516,12 +508,13 @@ applyRipple():  // rAF 节流（pendingFrame 标志）
   container = currentBlock.closest(".protyle-wysiwyg")
   if (!container) return
 
-  // v2.3.0：句级 + 动态列表
-  currentSentence = getCurrentSentence(container, cursorRect)  // 按 .?! 切句
-  allBlocks = Array.from(container.querySelectorAll('[data-node-id], iframe, video'))
-  // indexMap: Map<Element, number>（allBlocks → 序号），fromIndex = currentBlock 序号
+  // v2.5.0：块级 opacity + 句级 Highlight 分两步
+  // 1) 块级 opacity（style.opacity）—— applyBlockOpacity(container, currentBlock)
+  allBlocks = container.querySelectorAll('[data-node-id], iframe, video')
+  // indexMap / fromIndex 由 currentBlock.parentElement.children 构建
   
   allBlocks.forEach(block => {
+    if (!isRippleTargetBlock(block)) return      // P3-8：非 target 块不碰 opacity
     distance = calculateBlockDistance(currentBlock, block, indexMap, fromIndex)
     baseOpacity = SENTENCE_LEVELS[min(distance, 4)]  // 5 档 [1.0, 0.88, 0.72, 0.55, 0.42]
     
@@ -531,8 +524,7 @@ applyRipple():  // rAF 节流（pendingFrame 标志）
     weight = visualWeightOf(block)
     opacity *= lerp(WEIGHT_MIN, 1.0, weight)  // WEIGHT_MIN = 0.85
     
-    // 嵌入块修正（v2.3.0）：×0.85
-    if isEmbedBlock(block): opacity *= EMBED_MULTIPLIER
+    // EMBED_MULTIPLIER 已移除（P2-5）：isRippleTargetBlock 在进入循环前已排除 embed 类型
     
     // 列表块深度系数（v2.3.0）：每深一层 ×0.95
     depth = depthOf(block)
@@ -541,77 +533,45 @@ applyRipple():  // rAF 节流（pendingFrame 标志）
     block.style.opacity = String(opacity)
   })
   
-  // 当前句强制最亮
-  if (currentSentence) currentSentence.style.opacity = "1"
-  currentBlock.style.opacity = "1"  // 兜底
+  // 2) 句级 dimming（CSS Custom Highlight API，零 DOM 突变，§4.3.3）
+  caretOffset = getCaretOffset(currentBlock)
+  if (caretOffset !== null):
+    applySentenceHighlight(currentBlock, caretOffset)  // 给非当前句染色
+  else:
+    CSS.highlights.delete("zt-sentence-dim")
+  // currentBlock 兜底 opacity=1 已在 applyBlockOpacity 内由 isRippleTargetBlock 守门
 ```
 
-#### 4.3.3 句级分割（`ripple.ts` 新增，v2.3.0）
+#### 4.3.3 句级 dimming（CSS Custom Highlight API，v2.5.0 重写）
+
+v2.5.0 废弃 span 包裹，改用 [CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API) 标记非当前句。**零 DOM 突变**——只在已有文本节点上构造 `Range` 对象，注册到 `CSS.highlights`，由 `::highlight(zt-sentence-dim)` 染色。
 
 ```typescript
-// v2.3.0：把当前块按 .?! 切成句（用 Range 构造临时 span）
-//
-// 关键技术决策（详见 docs/research/2026-06-30-siyuan-editor-dom.md）：
-// 1. block type 白名单：只处理 NodeParagraph/NodeHeading/NodeListItem，
-//    跳过 NodeCodeBlock/NodeBlockQueryEmbed/NodeAttributeView/NodeTable/NodeMathBlock
-// 2. 不用 range.surroundContents()（跨 inline 元素 strong/em/a 会抛 BAD_BOUNDARYPOINTS_ERR）
-//    改用 range.extractContents() + span.appendChild(fragment) + range.insertNode(span)
-// 3. 临时 span 样式：position:absolute + visibility:hidden + pointer-events:none
-//    （不影响布局、不响应点击）
-// 4. 必须保存/恢复 window.getSelection()，否则光标会跳到块尾
-// 5. 临时生命周期：当前帧创建，下一帧 removeSentenceSpans 清理
-//    （不污染 WYSIWYG.lastHTMLs，不影响 undo/redo）
+// ripple.ts:39
+const SENTENCE_DIM_HIGHLIGHT = "zt-sentence-dim";
 
-getSentences(container: HTMLElement, currentBlock: HTMLElement | null): Map<HTMLElement, HTMLElement[]> {
-  const result = new Map<HTMLElement, HTMLElement[]>();
-  if (!currentBlock || !container) return result;
-  if (!container.contains(currentBlock)) return result;
-  if (!isRippleTargetBlock(currentBlock)) return result;
-
-  // 1. 清理旧句级 span（防累积）
-  removeSentenceSpans(currentBlock);
-
-  // 2. 收集块内所有文本节点 + 偏移映射
-  const textNodes: Text[] = [];
-  const walker = document.createTreeWalker(currentBlock, NodeFilter.SHOW_TEXT);
-  let node;
-  while ((node = walker.nextNode())) textNodes.push(node);
-  // ... 构造 offsets 数组
-
-  // 3. 保存当前光标
-  const sel = window.getSelection();
-  const savedRange = sel?.getRangeAt(0).cloneRange();
-
-  // 4. 按标点切句 + 包裹
-  const spans: HTMLElement[] = [];
-  // ... 遍历 regex.exec(text)，对每段 wrapTextRange(...)
-
-  // 5. 兜底 + 恢复光标
-  if (savedRange && sel) {
-    sel.removeAllRanges();
-    sel.addRange(savedRange);
-  }
-  result.set(currentBlock, spans);
-  return result;
-}
-
-getCurrentSentence(container: HTMLElement, cursorRect: { x: number; y: number; height: number } | null): HTMLElement | null {
-  // 基于 window.getSelection() 的 anchorNode，向上找 .zt-sentence-span
-  const sel = window.getSelection();
-  if (!sel || !sel.rangeCount) return null;
-  const range = sel.getRangeAt(0);
-  let node: Node | null = range.startContainer;
-  while (node && node !== currentBlock) {
-    if (node instanceof HTMLElement && node.classList.contains('zt-sentence-span')) {
-      return node;
-    }
-    node = node.parentNode;
-  }
-  return null; // 未找到句级 span，退化为块级
-}
+// ripple.ts:147  applySentenceHighlight(block, caretOffset)
+//   1. textContent 按正则 /[.?!。？！]+/g 切句
+//   2. 为"不含光标"的每句构造 Range（setStart/setEnd 到对应 Text 节点 + 偏移）
+//   3. CSS.highlights.set("zt-sentence-dim", new Highlight(...dimRanges))
+//   4. 光标所在句不进 dimRanges → 保持默认色（最亮）
 ```
 
-**block type 白名单常量**（`ripple.ts` 顶部）：
+样式（`styles/index.scss:136-146`）：
+
+```scss
+:root { --zt-sentence-dim-color: rgba(0, 0, 0, 0.88); }              // 浅色
+[data-theme-mode="dark"] { --zt-sentence-dim-color: rgba(255, 255, 255, 0.88); }  // 深色
+::highlight(zt-sentence-dim) { color: var(--zt-sentence-dim-color); }
+```
+
+**为什么不用 opacity**：`::highlight()` 伪元素只支持 `color` / `background-color` / `text-decoration` / `text-shadow` / `-webkit-text-fill-color`，**不支持 `opacity`**。句级 dimming 用 `color: rgba(…,0.88)` 模拟——对纯文字视觉等效于 0.88 opacity。块级 dimming 仍用 `style.opacity`（见 §4.3.2）。
+
+**为什么废弃 span 包裹**（数据丢失 BUG 根因）：旧 `wrapTextRange` 用 `range.extractContents()` + `range.insertNode(span)` 把文本节点分裂到 `<span>` 内。SiYuan 的 input/keydown 处理器在 DOM 突变后重新查询选区，选区跨越 `<span>` 边界时语义改变 → 光标飘走 → 在 `。/？/！` 后继续打字会删除已有内容。Highlight API 不修改 DOM，彻底消除此冲突。
+
+**自愈**：SiYuan 的 `outerHTML` / `innerHTML` 交换会使 `Range` 对象失效（文本节点被替换），但 `CSS.highlights` 注册表本身不受影响。下一次 `selectionchange` → `applyRipple` → `applySentenceHighlight` 用新文本节点重建 Range，无需手动清理旧 span。
+
+**block type 白名单**（`ripple.ts:29-36`，v2.3.0 起不变）：
 
 ```typescript
 const RIPPLE_TARGET_BLOCK_TYPES = new Set([
@@ -628,7 +588,7 @@ const RIPPLE_SKIP_SELECTORS = ['.av', '.av__mask', 'code', 'pre'];
 > `NodeSuperBlock` 加入 SKIP（容器块，不应被切句）；
 > `RIPPLE_SKIP_SELECTORS` 额外以 CSS selector 形式排除 AV 框架、code、pre 元素。
 
-**性能**：句级分割只在 focus 激活 + selectionchange 时跑（被 `pendingFrame` rAF 节流），不会每帧扫。允许性能开销比之前稍大（用户已认可）。
+**性能**：`applySentenceHighlight` 只在 focus 激活 + selectionchange 时跑（被 `pendingFrame` rAF 节流），不每帧扫。`TreeWalker` 遍历文本节点 + 正则切句，开销与旧 span 方案同级，但省掉了 `extractContents`/`insertNode` 的 DOM 读写 + 选区保存/恢复。
 
 #### 4.3.4 列表块动态算法（v2.3.0 新增，Q5 = C）
 
@@ -668,7 +628,7 @@ function depthFactor(depth: number): number {
 - 列表项作为兄弟节点时，w 接近 1.0；远离视窗时 w 趋近 0（更暗）
 - 嵌套深的项（list-in-list-in-list）深度系数衰减，避免"全部都很亮"
 
-#### 4.3.5 块距离计算（`ripple.ts:42-51`，v2.3.0 改签名）
+#### 4.3.5 块距离计算（`ripple.ts:213`，inline in applyBlockOpacity，v2.3.0 改签名）
 
 ```typescript
 calculateBlockDistance(from, to, indexMap, fromIndex):
@@ -679,74 +639,58 @@ calculateBlockDistance(from, to, indexMap, fromIndex):
 
 **v2.3.0 改动**：旧版用 `parentElement.children.indexOf` 求兄弟序号；新版由调用方预建 `indexMap: Map<Element, number>`（遍历 `allBlocks` 时一次性建好）并传入 `fromIndex`，函数体只做一次 Map 查表，避免每次重算 siblings 数组。
 
-**嵌套块 v1 简化**：子项（如列表项）和外层（列表本身）是 siblings 时会一起被渐淡；如果嵌套在另一个块内部（list-in-list），外层只算 1 个距离。**v2.3.0**：distance 仍是基础，opacity 由视觉权重 + 深度系数修正。
+**嵌套块 v1 简化**：子项（如列表项）和外层（列表本身）是 siblings 时会一起被渐淡；如果嵌套在另一个块内部（list-in-list），外层只算 1 个距离。**v2.3.0**：distance 仍是基础，opacity 由视觉权重 + 深度系数修正。**v2.5.0 未变**：`fromIndex+1` fallback 仍在（P2-4，低优先级，需设计决策才能支持递归渐淡）。
 
-#### 4.3.6 重新计算接口（v2.3.0 新增）
+#### 4.3.6 重新计算接口（v2.5.0 移除）
 
-```typescript
-// 由 §3.7 块级插入动画结束后调用
-export function recompute(focusBlock: HTMLElement): void {
-  // 强制立即重算（不等 rAF）
-  currentBlock = focusBlock;
-  pendingFrame = null;  // 清掉 pending
-  applyRipple();
-}
-```
+v2.5.0 重写时删除了 `ripple.recompute` 导出。块级插入（Enter / Backspace）后光标移入新块 → 触发 `selectionchange` → `applyRipple` 自动重算，无需 typewriter 显式调用。typewriter 的 `animateBlockShift` 只负责 FLIP 位移 + 延迟两帧 `checkAndScroll` 对齐舒适区，不再 import ripple（见 §3.7.5）。
 
-**调用链**：Enter → `animateBlockShift` → 250ms 后 → `ripple.recompute(currentBlock)`。
-
-#### 4.3.4 触发链（`ripple.ts:102-112` + `index.ts`）
+#### 4.3.7 触发链（`ripple.ts:265-275`，v2.5.0 简化）
 
 ```typescript
-onSelectionChange():  // 注册的 3 个事件统一处理
-  lastTextCursorChange = now
-  lastTextBlock = cursor?.closest("[data-node-id]")
-  if (mode !== "paused"):
-    mode = "text"
-    applyRipple()
+onSelectionChange():  // 唯一注册的事件
+  applyRipple()       // rAF 节流；内部按 inputMode + shouldPause 决定 apply/clearAll
 ```
 
-**注册的事件**：`selectionchange` / `click` / `keyup`（3 个事件都触发 onSelectionChange）。
+**注册的事件**：仅 `selectionchange`（ripple.ts:274）。v2.5.0 重写时移除了旧 `click` / `keyup` 注册——`selectionchange` 已覆盖打字 / 点击 / 键盘移动 / IME / 粘贴所有场景。退出场景（wheel / blur / click 关闭 focus）由 inputMode 订阅触发 `clearAll()`（P1-1，ripple.ts:279-281）。
 
-### 4.4 Q3 mouse 模式 — 暂停 + 入口保留
+### 4.4 Q3 mouse 模式 — 已移除（入口可恢复）
 
 **设计意图**（v2.0 时代）：只读模式 / 空闲 2s / 鼠标移到其他块时 → 涟漪从"跟随光标"切到"跟随鼠标"。
 
-**决策**（2026-06-30）：
-- **暂停实现**：鼠标相关事件 + 模式切换逻辑全部注释（`ripple.ts:118-155`）
-- **暂停配置**：`MOUSE_THROTTLE = 100` / `IDLE_THRESHOLD = 2000` 保留在 `config.ts`，未来恢复时直接用
-- **类型保留**：`RippleMode = "text" | "mouse" | "paused"` 中 `"mouse"` 不删
-- **未来恢复路径**（注释指明）：
-  1. `ripple.ts` 恢复 `onMouseMove` 完整实现
-  2. `initRipple()` handlers 数组加 `["mousemove", onMouseMove, { passive: true }]`
-  3. `getCurrentBlock()` 取消注释 mouse 模式分支
-  4. 决定触发条件（只读 / idle / 鼠标进其他块）后启用
+**决策历史**：2026-06-30 暂停（代码注释 + 配置保留）；**v2.5.0 重写时彻底移除**——`onMouseMove` / `MOUSE_THROTTLE` / `IDLE_THRESHOLD` / 滚动条缓冲 / `RippleMode` 类型随 ripple.ts 重写删除，config.ts 的 `MOUSE_THROTTLE` / `IDLE_THRESHOLD` 也一并清理。ripple.ts 现仅 `selectionchange` + inputMode 订阅。
+
+**未来恢复路径**（需重建，非取消注释）：
+  1. `ripple.ts` 重新实现 `onMouseMove`（视觉权重 + throttle）
+  2. `initRipple()` 加 `["mousemove", onMouseMove, { passive: true }]` 注册
+  3. `getCurrentBlock()` 加 mouse 模式分支
+  4. `config.ts` 重新加 `MOUSE_THROTTLE` / `IDLE_THRESHOLD`
+  5. 决定触发条件（只读 / idle / 鼠标进其他块）后启用
 
 **理由**（与高亮条同款）：用户偏好"纯 text 模式"，mouse 模式引入"模式切换"的认知负担，权衡后下线。
 
-### 4.5 配置入口（v2.3.0 更新）
+### 4.5 配置入口（v2.5.0 更新）
 
-`config.ts:69-86` `RIPPLE_CONFIG`：
+`config.ts:52-61` `RIPPLE_CONFIG`：
 
 ```typescript
-SENTENCE_LEVELS: [1.0, 0.88, 0.72, 0.55, 0.42]  // v2.3.0：5 档句级 / 块级（替换 OPACITY_LEVELS 6 档）
-EMBED_MULTIPLIER: 0.85                          // v2.3.0：嵌入块基础值 × 此系数
-DEPTH_FACTOR: 0.05                              // v2.3.0：列表深度每层 × (1 - DEPTH_FACTOR)
-WEIGHT_MIN: 0.85                                // v2.3.0：视觉权重下限（lerp 起点）
-MOUSE_THROTTLE: 100                             // ms（暂停，保留）
-IDLE_THRESHOLD: 2000                            // ms（暂停，保留）
-OPACITY_LEVELS: [1.0, 0.85, 0.6, 0.35, 0.15, 0.05]  // v2.2.1 旧字段，保留兼容
+SENTENCE_LEVELS: [1.0, 0.88, 0.72, 0.55, 0.42]  // 5 档句级 / 块级 opacity 梯度
+EMBED_MULTIPLIER: 0.85                          // 死代码（P2-5）：isRippleTargetBlock 排除 embed 后不生效，保留作设计文档
+DEPTH_FACTOR: 0.05                              // 列表深度每层 × (1 - DEPTH_FACTOR)，最低 0.7
+WEIGHT_MIN: 0.85                                // 视觉权重下限（lerp 起点）
 ```
+
+> v2.5.0 清理：`MOUSE_THROTTLE` / `IDLE_THRESHOLD` / `OPACITY_LEVELS`（v2.2.1 旧字段）随 mouse 模式移除一并删除。句级 dimming 的 0.88 不走 `SENTENCE_LEVELS[1]`，而是 `--zt-sentence-dim-color` 的 rgba alpha（styles/index.scss:137,141），两者数值一致但代码独立。
 
 ### 4.6 TODO
 
 | TODO | 内容 |
 |---|---|
-| **区分不同的块类型** | 当前嵌入块统一 ×0.85，但嵌入网页（iframe）/ 嵌入笔记块（`[data-type="NodeBlockQueryEmbed"]`）/ PDF / video / 代码块 / HTML 块的视觉权重差异大，需分别测准修正系数 |
+| **区分不同的块类型** | `EMBED_MULTIPLIER`（×0.85）已是死代码（P2-5）：`isRippleTargetBlock` 在乘数前就排除 iframe / `[data-type="NodeBlockQueryEmbed"]` / PDF / video / 代码块 / HTML 块，嵌入块当前完全不参与 dimming。若要让 embed 重新参与，需重构 `applyBlockOpacity` 让 embed 块进入处理后再恢复乘数，并分别测准不同块类型的修正系数（使用点 TODO：ripple.ts:218-221） |
 | **视觉权重"理想值"标定** | 当前权重公式 (`lerp(0.85, 1.0, visible/editorH)`) 是经验值；不同窗口大小 / 字号 / 行数下需要重新测试 |
-| **句级切分边界** | `.?!` 是常用边界，但中英文标点混合、`...`、`?!` 组合等场景需要更精细规则 |
-| **嵌套块递归渐淡** | 当前 list-in-list 外层只算 1 个距离；用户反馈需要递归时单独迭代 |
-| **mouse 模式触发条件** | Q3 决策暂停：只读 / idle / 鼠标进其他块 三个候选条件未选定 |
+| **句级切分边界** | 现按 `[.?!。？！]+` 切句；`...`、`?!` 组合、中英文标点混合等场景可能需要更精细规则 |
+| **嵌套块递归渐淡（P2-4）** | 当前 list-in-list 外层只算 1 个距离（`fromIndex+1` fallback，ripple.ts:213）；用户反馈需要递归时单独迭代，低优先级 |
+| **mouse 模式触发条件** | Q3 决策下线，v2.5.0 重写时彻底移除（代码 + config）；未来恢复需重建（§4.4），触发条件（只读 / idle / 鼠标进其他块）未选定 |
 
 ---
 
@@ -897,7 +841,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 
 ## 8. 配置参数（`src/config.ts`）
 
-### 8.1 完整参数表（v2.3.0 更新）
+### 8.1 完整参数表（v2.5.0 更新）
 
 | 模块 | 配置块 | 参数 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -914,23 +858,17 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | 打字机 | `TYPEWRITER_CONFIG` | **`COMFORT_ZONE`** | **`[0.38, 0.50]`** | **v2.3.0：舒适区间 [低, 高]；区间内不触发滚动** |
 | 打字机 | `TYPEWRITER_CONFIG` | **`SCROLL_DURATION_TIERS`** | **`[180, 260, 360, 480, 600]` ms** | **v2.3.0：距离分档时长（从 typewriter.ts 移入 config）** |
 | 打字机 | `TYPEWRITER_CONFIG` | **`SCROLL_CURVE`** | **`cubic-bezier(0.25, 0.1, 0.25, 1)`** | **v2.3.0：动画曲线（与光标一致）** |
-| 打字机 | `TYPEWRITER_CONFIG` | `TARGET_RATIO` | `0.38` | v2.2.1 旧字段，保留兼容（实际不再使用） |
-| 打字机 | `TYPEWRITER_CONFIG` | `THRESHOLD` | `40` | **保留，typewriter.ts 不再使用**（保留 API 稳定性） |
-| 打字机 | `TYPEWRITER_CONFIG` | `DURATION` | `400` | **保留，typewriter.ts 不再使用** |
-| 涟漪 | `RIPPLE_CONFIG` | **`SENTENCE_LEVELS`** | **`[1.0, 0.88, 0.72, 0.55, 0.42]`** | **v2.3.0：5 档句级 / 块级 opacity 梯度** |
-| 涟漪 | `RIPPLE_CONFIG` | **`EMBED_MULTIPLIER`** | **`0.85`** | **v2.3.0：嵌入块基础值 × 此系数** |
-| 涟漪 | `RIPPLE_CONFIG` | **`DEPTH_FACTOR`** | **`0.05`** | **v2.3.0：列表深度每层 × (1 - DEPTH_FACTOR)，最低 0.7** |
-| 涟漪 | `RIPPLE_CONFIG` | **`WEIGHT_MIN`** | **`0.85`** | **v2.3.0：视觉权重 lerp 下限** |
-| 涟漪 | `RIPPLE_CONFIG` | `OPACITY_LEVELS` | `[1.0, 0.85, 0.6, 0.35, 0.15, 0.05]` | v2.2.1 旧字段，保留兼容 |
-| 涟漪 | `RIPPLE_CONFIG` | `MOUSE_THROTTLE` | `100` ms | **暂停功能入口**，见 §4.4 |
-| 涟漪 | `RIPPLE_CONFIG` | `IDLE_THRESHOLD` | `2000` ms | **暂停功能入口**，见 §4.4 |
+| 涟漪 | `RIPPLE_CONFIG` | **`SENTENCE_LEVELS`** | **`[1.0, 0.88, 0.72, 0.55, 0.42]`** | 5 档句级 / 块级 opacity 梯度（句级 0.88 由 `--zt-sentence-dim-color` 实现，见 §4.3.3） |
+| 涟漪 | `RIPPLE_CONFIG` | **`EMBED_MULTIPLIER`** | **`0.85`** | **死代码（P2-5）**：`isRippleTargetBlock` 排除 embed 后不生效，保留作设计文档 |
+| 涟漪 | `RIPPLE_CONFIG` | **`DEPTH_FACTOR`** | **`0.05`** | 列表深度每层 × (1 - DEPTH_FACTOR)，最低 0.7 |
+| 涟漪 | `RIPPLE_CONFIG` | **`WEIGHT_MIN`** | **`0.85`** | 视觉权重 lerp 下限 |
 
 ### 8.2 "暂停功能"入口
 
 | 入口位置 | 状态 | 未来恢复路径 |
 |---|---|---|
 | `config.ts:48-66` `TYPEWRITER_HIGHLIGHT_RESERVED` 注释块 | 永久下线 | 4 步：typewriter.ts 重写 + index.scss 加 CSS + 测试场景重跑 |
-| `config.ts:73-75` `MOUSE_THROTTLE` + `IDLE_THRESHOLD` | 暂停（值保留） | 3 步：ripple.ts 取消 onMouseMove 注释 + initRipple 注册事件 + 决定触发条件 |
+| ~~`MOUSE_THROTTLE` + `IDLE_THRESHOLD`~~ | v2.5.0 移除 | 需重建：ripple.ts 重写 `onMouseMove` + `initRipple` 注册事件 + `config.ts` 重新加配置 + 决定触发条件（§4.4） |
 | `cursor.ts:146-148` squish/bounce 触发函数注释 | 永久下线 | git history `0ee73ed` 之前恢复 + SCSS keyframes |
 | `config.ts:123-132` SCSS 锁死开关注释 | 暂未开放 | 待 SCSS 编译策略改造 |
 
@@ -948,6 +886,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | **v2.2.0 (P2 EventBus)** | 2026-06-29 | 全面迁移到官方 EventBus；getActiveEditor/getFrontend 替代 DOM 遍历 |
 | **v2.2.1 (Cursor Edge + Typewriter)** | 2026-06-30 | Plan 6 cursor 边缘交互 + typewriter 重写（isInAllowElements + editorRect） |
 | **v2.3.0 (Typewriter Range + Block Insertion + Ripple Sentence)** | 2026-06-30 | 舒适区间 + 曲线原语 + 块级插入 FLIP + 涟漪句级 + 列表动态算法 + 雾边圆环图标 + wheel exit 修复 |
+| **v2.5.0 (Ripple Highlight API + CR 收尾)** | 2026-07-03 | ripple 句级从 span 包裹重写为 CSS Custom Highlight API（零 DOM 突变，修复数据丢失 bug）；P1-1/P2-3/P2-5/P3-7/P3-8 代码审查修复；TODO-6 首字滚动修复 |
 
 ### 9.2 cursor 模块决策（Round 5 → Round 11）
 
@@ -1020,9 +959,18 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | **wheel exit bug 修复** ✅ | wheel handler 加 `{ capture: true }`（commit `7a368db`）—— 与 keydown/scroll/input 一致 | 用户报告"滚轮退出 typewriter/focus 没有实现" |
 | **清理文档** | 删 5 个过时 doc；CHANGELOG 移到 docs/；归档 6 个旧 plan | 文档漂移严重 |
 
-### 9.8 明确推迟项
+### 9.8 v2.5.0 决策（Ripple Highlight API 重写）
 
-### 9.7 明确推迟项
+| 项 | 决策 | 理由 |
+|---|---|---|
+| Ripple 句级 dimming | span 包裹 → CSS Custom Highlight API | span 的 `extractContents`+`insertNode` 分裂文本节点，破坏 SiYuan selection 语义 → 光标跳位 → 内容删除（数据丢失 bug） |
+| `::highlight` 不支持 opacity | 用 `color: rgba()` 模拟（`--zt-sentence-dim-color`） | 块级 opacity 保留（SiYuan 不动块本身），句级用颜色 |
+| ripple 订阅 inputMode | `focusActive→false` 时 `clearAll()` | wheel/blur/click 不触发 `selectionchange`，旧路径漏清导致透明度残留（P1-1） |
+| FLIP transition 泄漏 | `lastFLIPElements` 跟踪 + 新 FLIP 入口清理 | `|delta|<2` 跳过的元素残留 `transition: transform 250ms`（P3-7） |
+| EMBED_MULTIPLIER 死代码 | 删 `isEmbedBlock` 函数 + 乘数；config 保留作文档 | `isRippleTargetBlock` 已排除 embed 类型，乘数不可达（P2-5） |
+| smoothScroll 合并路径 | 删除死代码，保留 drop 策略 | `isScrolling()` guard 使合并路径不可达（P2-3，TODO-5 设计） |
+
+### 9.9 明确推迟项
 
 | 项 | 状态 | 来源 |
 |---|---|---|
@@ -1057,12 +1005,12 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 
 | 文件 | 当前 | 备注 |
 |---|---|---|
-| `package.json` `version` | `2.0.0` | **v2.3.0 cleanup 升级到 `2.3.0`** |
-| `plugin.json` `version` | `2.0.0` | 同上 |
-| `CHANGELOG.md` | 待补 v2.3.0 段 | 本次一并补 v2.2.1 typewriter + v2.3.0 |
+| `package.json` `version` | `2.5.0` | v2.5.0 发布版本 |
+| `plugin.json` `version` | `2.5.0` | 同上 |
+| `CHANGELOG.md` | 已删除 / 不再维护 | 5b9a44f 文档清理时移除，版本记录见 git log + docs/TODO.md |
 
-> 版本号与代码实际状态不匹配是 v2.2.x 系列没有 release 的副作用（一直在 fix 分支累积）。本次 cleanup 一次性把两个 `version` 字段同步到 `2.3.0`，CHANGELOG 补全 v2.2.1 / v2.3.0 段。
+> v2.5.0 一次性把两个 `version` 字段从 `2.3.0` 同步到 `2.5.0`（跳过 2.4，标志 Ripple Highlight API 重写里程碑）。
 
 ---
 
-**最后更新**：2026-06-30（v2.3.0 DESIGN.md 更新 + Q5 列表算法决策 + 块级插入动画）
+**最后更新**：2026-07-03（v2.5.0 Ripple Highlight API 重写 + 代码审查修复 + 发布 2.5.0）

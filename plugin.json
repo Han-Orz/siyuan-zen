@@ -2,7 +2,7 @@
   "name": "siyuan-zen",
   "author": "Han-Orz",
   "url": "https://github.com/Han-Orz/siyuan-zen",
-  "version": "2.3.0",
+  "version": "2.5.0",
   "minAppVersion": "3.0.12",
   "backends": ["all"],
   "frontends": ["all"],

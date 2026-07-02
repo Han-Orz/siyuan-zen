@@ -15,7 +15,7 @@ Smooth cursor + typewriter mode + ripple focus for distraction-free writing in S
 
 - **Smooth Cursor** — Custom blue cursor replaces the system caret with smooth transition animation
 - **Typewriter Mode** — Your caret stays at 38% screen height (golden ratio), with a subtle highlight bar tracking it
-- **Ripple Focus** — The current block stays bright while surrounding blocks gradually fade
+- **Ripple Focus** — The current sentence stays bright while surrounding blocks/sentences gradually dim (CSS Custom Highlight API, zero DOM mutation, no data loss)
 
 ## Installation
 
@@ -52,7 +52,7 @@ When you drag-select text, ripple focus and typewriter mode gracefully fade out 
 
 Read-only mode and block popups automatically suspend typewriter mode. Ripple focus switches to mouse-centered mode in read-only.
 
-## Customization (v2.2.1)
+## Customization (v2.5.0)
 
 Open `src/config.ts` to tweak:
 
@@ -76,7 +76,7 @@ Open `src/styles/index.scss` to tweak visual style:
 
 `pnpm run dev` rebuilds on save; SiYuan hot-reloads in 1-2 seconds.
 
-### Edge Behavior (v2.2.1)
+### Edge Behavior (v2.5.0)
 
 When the cursor scrolls off the visible editor area (top or bottom), it stays at the last visible position and smoothly fades to 0 opacity over `EDGE_FADE.ZONE` pixels. Returning to the viewport fades it back in. Top and bottom are now symmetric.
 

@@ -129,3 +129,18 @@ body.zentype-cursor-active .protyle-title__input { caret-color: transparent; }
 .zentype-topbar-icon--on:hover svg circle {
   animation-play-state: paused;
 }
+
+// ===== 涟漪聚焦句级 dimming (CSS Custom Highlight API) =====
+// v2.5.0：废弃 span 包裹，改用 CSS Custom Highlight API（零 DOM 突变）
+// ::highlight 不支持 opacity，用 color 模拟。浅色/深色主题分别设色。
+:root {
+  --zt-sentence-dim-color: rgba(0, 0, 0, 0.88);
+}
+
+[data-theme-mode="dark"] {
+  --zt-sentence-dim-color: rgba(255, 255, 255, 0.88);
+}
+
+::highlight(zt-sentence-dim) {
+  color: var(--zt-sentence-dim-color);
+}

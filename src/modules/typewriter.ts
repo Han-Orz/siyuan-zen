@@ -12,6 +12,7 @@ let pendingScroll: number | null = null;
 let pendingScrollTarget: HTMLElement | null = null;
 let pendingScrollEnd: number = 0;
 let activeFLIPTimer: ReturnType<typeof setTimeout> | null = null;
+let lastFLIPElements: HTMLElement[] = []; // P3-7: 上一轮 FLIP 修改的元素，供下一轮入口清理残留 inline transition
 
 /** isScrolling 由 pendingScroll !== null 推断，无需独立状态管理 — 避免动画结束到定时器置 false 间的竞态窗口 */
 function isScrolling(): boolean {
@@ -45,6 +46,16 @@ function animateBlockShift(editor: HTMLElement): void {
     activeFLIPTimer = null;
   }
 
+  // P3-7: 清理上一轮 FLIP 残留的 inline transition/transform。连续 Enter 时前一轮
+  // cleanup setTimeout 已被上方取消，被 |delta|<2 跳过的元素会永久残留 transition。
+  for (const el of lastFLIPElements) {
+    if (el.isConnected) {
+      el.style.transform = '';
+      el.style.transition = '';
+    }
+  }
+  lastFLIPElements = [];
+
   // First: 捕获阶段同步快照所有块的旧位置（在 Enter 的 capture handler 中调用，
   // 此时 SiYuan bubble handler 尚未改 DOM）
   const first = new Map<HTMLElement, number>();
@@ -67,6 +78,8 @@ function animateBlockShift(editor: HTMLElement): void {
       el.style.transition = 'none';
       modifiedElements.push(el);
     }
+
+    lastFLIPElements = modifiedElements;
 
     if (modifiedElements.length === 0) return;
 
@@ -111,11 +124,9 @@ interface SmoothScrollOptions {
 function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   const { deltaY, duration } = options;
 
-  if (pendingScroll !== null && pendingScrollTarget === target) {
-    pendingScrollEnd = target.scrollTop + deltaY;
-    return;
-  }
-
+  // 设计决策（TODO-5）：checkAndScroll 的 isScrolling() 守卫在动画进行中直接 return，
+  // 新滚动请求被丢弃而非合并。下方 cancelAnimationFrame 为防御性保留（未来若有其他
+  // 调用方绕过守卫进入此函数时可安全接管）。
   if (pendingScroll !== null) cancelAnimationFrame(pendingScroll);
 
   pendingScrollTarget = target;
@@ -329,4 +340,5 @@ export function destroyTypewriter(): void {
   lastCheckRect = null;
   pendingScrollTarget = null;
   pendingScrollEnd = 0;
+  lastFLIPElements = [];
 }
