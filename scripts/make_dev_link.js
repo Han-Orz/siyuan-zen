@@ -1,6 +1,6 @@
 // scripts/make_dev_link.js
 //
-// Purpose: Create a directory symlink from <SiYuan workspace>/data/plugins/siyuan-zen/
+// Purpose: Create a directory symlink from <SiYuan workspace>/data/plugins/zenType/
 // to <project>/dev/, so SiYuan hot-reloads the plugin as we rebuild during development.
 //
 // Workspace resolution order:
@@ -17,7 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const PLUGIN_NAME = 'siyuan-zen';
+const PLUGIN_NAME = 'zenType';
 const DEFAULT_WORKSPACE = path.join(os.homedir(), 'Documents', 'SiYuan');
 // Markers that distinguish a real SiYuan workspace from a random directory
 // of the same name. The workspace must contain at least one of these.

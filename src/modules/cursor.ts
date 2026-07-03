@@ -36,7 +36,7 @@ import { getEdgeProximity, type EdgeProximity } from "../utils/edgeProximity";
 import {
   initBreathing,
   pauseBreathe,
-  resumeBreathe,
+  scheduleBreathe,
   destroyBreathing,
 } from "./cursor/breathing";
 import * as inputMode from "./inputMode";
@@ -45,9 +45,9 @@ const CURSOR_ID = "zentype-cursor";
 
 let cursorEl: HTMLDivElement | null = null;
 let pendingFrame: number | null = null;
+let removeTransitionFrame: number | null = null;
 let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 .no-transition，保留 0.15s 跳移动画
 let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round 4 fix（capture + cooldown）：键盘事件后 150ms 内 scroll/ResizeObserver 知道本次更新是键盘驱动
-let resumeBreatheTimer: ReturnType<typeof setTimeout> | null = null; // commit A fix：复用 setTimeout，避免堆叠；destroy 时清理
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
 let prevCursorX: number | null = null; // Q7：上一次写入 transform 时的 x，用于计算本帧移动距离 → 时长
 let prevCursorY: number | null = null; // Q7：上一次写入 transform 时的 y，同上
@@ -55,6 +55,11 @@ let wasOffScreen = false; // Q-return：上一帧是否在 case B（编辑器内
 let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 3（箭头，已禁用）复用
 let arrowEl: HTMLDivElement | null = null; // commit 3：视口边缘箭头 DOM 引用
 let arrowVisible = false; // commit 3：箭头可见状态（避免重复写 class）
+let initialized = false;
+let cachedZIndexElement: Element | null = null;
+let cachedEffectiveZIndex = 0;
+let cachedFullscreenElement: Element | null = null;
+let lastScrollBindingCursorElement: Element | null = null;
 
 function markKeyboardPending(): void {
   pendingKeyboardUpdate = true;
@@ -233,7 +238,7 @@ function queueUpdate(): void {
  *   5. 计算 zIndex（基于 window.siyuan.zIndex + 1）
  *   6. 写 transform / height / zIndex（commit 1：边缘淡出态走 applyFadeAndScale）
  *   7. 强制布局同步 → rAF 移除 no-transition
- *   8. setTimeout 1500ms 后恢复呼吸（commit 1：边缘附近不恢复，保持暂停）
+ *   8. scheduleBreathe() 延迟恢复呼吸（边缘附近不恢复，保持暂停）
  */
 function doUpdateCursor(): void {
   if (!cursorEl) return;
@@ -317,7 +322,21 @@ function doUpdateCursor(): void {
   // 4) zIndex：取编辑器祖先链上最近的层叠上下文 + 1，不强制抬高到 siyuan 全局，
   //    让悬浮窗/弹窗（通常 z-index 更高）能盖在光标上方。
   //    参考实现：顺滑光标.js v0.0.12.4 也只用 effectiveZ + 1。
-  const effectiveZ = getEffectiveZIndex(allowed.cursorElement!);
+  let effectiveZ: number;
+  const fullscreenElement = allowed.cursorElement!.closest(".fullscreen");
+  if (
+    allowed.cursorElement === cachedZIndexElement &&
+    fullscreenElement === cachedFullscreenElement &&
+    cachedZIndexElement !== null &&
+    cachedZIndexElement.isConnected
+  ) {
+    effectiveZ = cachedEffectiveZIndex;
+  } else {
+    effectiveZ = getEffectiveZIndex(allowed.cursorElement!);
+    cachedZIndexElement = allowed.cursorElement;
+    cachedFullscreenElement = fullscreenElement;
+    cachedEffectiveZIndex = effectiveZ;
+  }
   cursorEl.style.zIndex = String(effectiveZ + 1);
 
   // 5) commit 1：记录"上次正常位置"，用于离屏/边界失败时保持位置
@@ -363,7 +382,9 @@ function doUpdateCursor(): void {
   void cursorEl.offsetHeight;
 
   // 下一帧恢复 transition（transform / height / opacity 过渡）
-  requestAnimationFrame(() => {
+  if (removeTransitionFrame !== null) cancelAnimationFrame(removeTransitionFrame);
+  removeTransitionFrame = requestAnimationFrame(() => {
+    removeTransitionFrame = null;
     cursorEl?.classList.remove("no-transition");
   });
 
@@ -385,11 +406,7 @@ function doUpdateCursor(): void {
 }
 
 function scheduleResumeBreathe(): void {
-  if (resumeBreatheTimer !== null) clearTimeout(resumeBreatheTimer);
-  resumeBreatheTimer = setTimeout(() => {
-    resumeBreatheTimer = null;
-    resumeBreathe();
-  }, CURSOR_CONFIG.BLINK_DELAY_MS);
+  scheduleBreathe(CURSOR_CONFIG.BLINK_DELAY_MS);
 }
 
 /** 滚动 / 滚轮处理：暂停呼吸 + 停止过渡 + 立即更新 */
@@ -507,6 +524,14 @@ function bindPopoverDrag(cursorElement: Element | null): void {
 /** 嵌套滚动容器：给所有可滚动祖先绑 scroll/wheel 监听（passive） */
 function bindScrollContainerEvents(cursorElement: Element | null): void {
   if (!cursorElement) return;
+  if (
+    cursorElement === lastScrollBindingCursorElement &&
+    scrollEventBindings.length > 0 &&
+    scrollEventBindings.every(({ el }) => el.isConnected)
+  ) {
+    return;
+  }
+  lastScrollBindingCursorElement = cursorElement;
 
   const scrollEls = findAllScrollableAncestors(cursorElement);
   const currentSet = new Set(scrollEls);
@@ -547,12 +572,15 @@ function bindScrollContainerEvents(cursorElement: Element | null): void {
 }
 
 export function initCursor(): void {
+  if (initialized) return;
+  initialized = true;
+
   // 创建 DOM
   cursorEl = createCursorElement();
   initBreathing(cursorEl);
 
-  // commit C fix：呼吸与聚焦模式解耦，光标始终呼吸；仅在聚焦模式开启时
-  // 通过 inputMode.subscribe 触发 scheduleResumeBreathe 同步开启瞬间。
+  // commit C fix：呼吸与聚焦模式解耦，光标始终呼吸；聚焦模式开启时
+  // 重新调度一次 idle 呼吸恢复。
   unsubInputMode = inputMode.subscribe((state) => {
     if (!cursorEl) return;
     if (state.focusActive) scheduleResumeBreathe();
@@ -647,6 +675,8 @@ export function initCursor(): void {
 }
 
 export function destroyCursor(): void {
+  initialized = false;
+
   // round 4 fix（capture + cooldown）：清理键盘冷却定时器
   if (keyboardCooldownTimer !== null) {
     clearTimeout(keyboardCooldownTimer);
@@ -676,6 +706,10 @@ export function destroyCursor(): void {
     cancelAnimationFrame(pendingFrame);
     pendingFrame = null;
   }
+  if (removeTransitionFrame !== null) {
+    cancelAnimationFrame(removeTransitionFrame);
+    removeTransitionFrame = null;
+  }
 
   // 移除 DOM 元素
   if (cursorEl) {
@@ -699,18 +733,18 @@ export function destroyCursor(): void {
     delete (el as any).__zentypeScrollBound;
   });
   scrollEventBindings.length = 0;
+  lastScrollBindingCursorElement = null;
 
-  // commit A fix：重置聚焦/打字机模式辅助状态 + 清理呼吸恢复定时器
+  // commit A fix：重置聚焦/打字机模式辅助状态
   isPasting = false;
   mouseDownInfo = null;
-  if (resumeBreatheTimer !== null) {
-    clearTimeout(resumeBreatheTimer);
-    resumeBreatheTimer = null;
-  }
 
   // commit 1：重置边缘交互状态
   lastGoodCursorPos = null;
   currentEdge = null;
+  cachedZIndexElement = null;
+  cachedFullscreenElement = null;
+  cachedEffectiveZIndex = 0;
   prevCursorX = null; // Q7：重置距离记录，下次启动从头计算
   prevCursorY = null;
   wasOffScreen = false; // Q-return：重置"上一帧离屏"标记

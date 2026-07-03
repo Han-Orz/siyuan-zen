@@ -35,10 +35,12 @@ const SENTENCE_FADE_MS = Math.round(TRANSITION_SEC * 1000);
 // --- State ---
 
 let active = false;
+let initialized = false;
 let pendingFrame: number | null = null;
 let eventListeners: Array<[string, EventListener]> = [];
 const modifiedBlocks = new Set<HTMLElement>();
 let unsubInputMode: (() => void) | null = null;
+let visualStateDirty = false;
 
 // P0-3: 块级 opacity 缓存——同一顶层块 + 无滚动 + 无块增删时跳过整个 applyBlockOpacity。
 // containerTop（rect.top）捕获祖先滚动；scrollTop 捕获 container 自身滚动。
@@ -150,6 +152,12 @@ let lastHadDimRanges = false;
 let lastDimFirstNode: Text | null = null;
 let sentenceFadeFrame: number | null = null;
 let sentenceFadeToken = 0;
+let activeSentenceFade: {
+  block: HTMLElement;
+  blockId: string | null;
+  oldRange: SentenceRange;
+  newRange: SentenceRange;
+} | null = null;
 
 function sentenceHighlightSupported(): boolean {
   return "highlights" in CSS && typeof Highlight !== "undefined";
@@ -193,6 +201,7 @@ function rangeFromOffsets(textNodeMap: TextNodeEntry[], start: number, end: numb
 function setSentenceHighlight(name: string, ranges: Range[]): void {
   if (ranges.length > 0) {
     CSS.highlights.set(name, new Highlight(...ranges));
+    visualStateDirty = true;
   } else {
     CSS.highlights.delete(name);
   }
@@ -222,6 +231,7 @@ function resetSentenceCache(): void {
 
 function cancelSentenceFade(): void {
   sentenceFadeToken += 1;
+  activeSentenceFade = null;
   if (sentenceFadeFrame !== null) {
     cancelAnimationFrame(sentenceFadeFrame);
     sentenceFadeFrame = null;
@@ -273,6 +283,62 @@ function getBlockTextColor(block: HTMLElement): Rgba {
   return { r: fallback, g: fallback, b: fallback, a: 1 };
 }
 
+function applyStableSentenceHighlight(block: HTMLElement): void {
+  const text = block.textContent ?? "";
+  if (!text) {
+    CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+    resetSentenceCache();
+    return;
+  }
+
+  const textNodeMap = buildTextNodeMap(block);
+  const caretOffset = getCaretOffset(block, textNodeMap);
+  if (caretOffset === null) {
+    CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+    resetSentenceCache();
+    return;
+  }
+
+  const sentenceRanges = splitSentences(text);
+  let caretRange: SentenceRange | null = null;
+  for (const { start, end } of sentenceRanges) {
+    if (caretOffset >= start && caretOffset <= end) {
+      caretRange = { start, end };
+      break;
+    }
+  }
+
+  const dimRanges = buildDimRanges(
+    sentenceRanges,
+    textNodeMap,
+    caretRange ? [caretRange] : [],
+  );
+  setSentenceHighlight(SENTENCE_DIM_HIGHLIGHT, dimRanges);
+
+  lastDimBlockId = block.dataset?.nodeId ?? null;
+  lastDimText = text;
+  lastCaretSentenceRange = caretRange;
+  lastHadDimRanges = dimRanges.length > 0;
+  lastDimFirstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
+}
+
+function refreshSentenceFadeRanges(
+  textNodeMap: TextNodeEntry[],
+  sentenceRanges: SentenceRange[],
+  oldCaretRange: SentenceRange,
+  newCaretRange: SentenceRange,
+): { oldRange: SentenceRange; newRange: SentenceRange } | null {
+  const fadeOutSource = sentenceRanges.find((range) => range.start === oldCaretRange.start) ?? oldCaretRange;
+  const fadeInSource = sentenceRanges.find((range) => range.start === newCaretRange.start) ?? newCaretRange;
+  const fadeOutRange = rangeFromOffsets(textNodeMap, fadeOutSource.start, fadeOutSource.end);
+  const fadeInRange = rangeFromOffsets(textNodeMap, fadeInSource.start, fadeInSource.end);
+  if (!fadeOutRange || !fadeInRange) return null;
+
+  setSentenceHighlight(SENTENCE_FADE_OUT_HIGHLIGHT, [fadeOutRange]);
+  setSentenceHighlight(SENTENCE_FADE_IN_HIGHLIGHT, [fadeInRange]);
+  return { oldRange: fadeOutSource, newRange: fadeInSource };
+}
+
 function startSentenceFade(
   block: HTMLElement,
   textNodeMap: TextNodeEntry[],
@@ -299,31 +365,34 @@ function startSentenceFade(
   const dimColor = getThemeDimColor();
   document.documentElement.style.setProperty("--zt-sentence-fade-out-color", colorToCss(textColor));
   document.documentElement.style.setProperty("--zt-sentence-fade-in-color", colorToCss(dimColor));
+  visualStateDirty = true;
 
   setSentenceHighlight(SENTENCE_FADE_OUT_HIGHLIGHT, [fadeOutRange]);
   setSentenceHighlight(SENTENCE_FADE_IN_HIGHLIGHT, [fadeInRange]);
+  activeSentenceFade = {
+    block,
+    blockId,
+    oldRange: fadeOutSource,
+    newRange: fadeInSource,
+  };
 
   const finish = () => {
     if (token !== sentenceFadeToken) return;
     sentenceFadeFrame = null;
+    const finishedFade = activeSentenceFade;
+    activeSentenceFade = null;
     CSS.highlights.delete(SENTENCE_FADE_OUT_HIGHLIGHT);
     CSS.highlights.delete(SENTENCE_FADE_IN_HIGHLIGHT);
 
-    if (
-      active &&
-      block.isConnected &&
-      firstNode !== null &&
-      block.contains(firstNode) &&
-      blockId === lastDimBlockId &&
-      text === lastDimText &&
-      rangesEqual(lastCaretSentenceRange, newCaretRange)
-    ) {
-      const finalDimRanges = buildDimRanges(sentenceRanges, textNodeMap, [newCaretRange]);
-      setSentenceHighlight(
-        SENTENCE_DIM_HIGHLIGHT,
-        finalDimRanges,
-      );
-      lastHadDimRanges = finalDimRanges.length > 0;
+    if (active && finishedFade) {
+      const currentBlock = getCurrentBlock();
+      if (
+        currentBlock &&
+        currentBlock.isConnected &&
+        currentBlock.dataset?.nodeId === finishedFade.blockId
+      ) {
+        applyStableSentenceHighlight(currentBlock);
+      }
     }
   };
 
@@ -402,6 +471,26 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
   }
 
   const previousCaretRange = lastCaretSentenceRange;
+  let continuingFade =
+    activeSentenceFade !== null &&
+    blockId === activeSentenceFade.blockId &&
+    caretRange !== null &&
+    caretRange.start === activeSentenceFade.newRange.start;
+  if (continuingFade && activeSentenceFade !== null && caretRange !== null) {
+    const refreshed = refreshSentenceFadeRanges(
+      textNodeMap,
+      matches,
+      activeSentenceFade.oldRange,
+      caretRange,
+    );
+    if (refreshed) {
+      activeSentenceFade.block = block;
+      activeSentenceFade.oldRange = refreshed.oldRange;
+      activeSentenceFade.newRange = refreshed.newRange;
+    } else {
+      continuingFade = false;
+    }
+  }
   const canAnimate =
     SENTENCE_FADE_MS > 0 &&
     blockId !== null &&
@@ -412,15 +501,16 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
     lastDimFirstNode !== null &&
     block.contains(lastDimFirstNode);
 
-  const dimRanges = buildDimRanges(
-    matches,
-    textNodeMap,
-    canAnimate && previousCaretRange && caretRange
-      ? [previousCaretRange, caretRange]
-      : caretRange
-        ? [caretRange]
-        : [],
-  );
+  let excludedRanges: SentenceRange[] = [];
+  if (continuingFade && activeSentenceFade !== null && caretRange !== null) {
+    excludedRanges = [activeSentenceFade.oldRange, caretRange];
+  } else if (canAnimate && previousCaretRange && caretRange) {
+    excludedRanges = [previousCaretRange, caretRange];
+  } else if (caretRange) {
+    excludedRanges = [caretRange];
+  }
+
+  const dimRanges = buildDimRanges(matches, textNodeMap, excludedRanges);
 
   if (dimRanges.length > 0) {
     setSentenceHighlight(SENTENCE_DIM_HIGHLIGHT, dimRanges);
@@ -442,7 +532,7 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
       setSentenceHighlight(SENTENCE_DIM_HIGHLIGHT, fallbackRanges);
       lastHadDimRanges = fallbackRanges.length > 0;
     }
-  } else {
+  } else if (!continuingFade) {
     cancelSentenceFade();
   }
 }
@@ -503,6 +593,7 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
     block.style.transition = `opacity ${TRANSITION_SEC}s ease`;
     block.style.opacity = String(baseLevel * weightFactor);
     newBlocks.add(block);
+    visualStateDirty = true;
   });
 
   // 不在新列表里的旧块：清 opacity（transition 仍在，淡出到 1）
@@ -542,6 +633,7 @@ function applyRipple(): void {
         "--zt-sentence-dim-color",
         `rgba(${dimRgb},${SENTENCE_DIM_ALPHA})`,
       );
+      visualStateDirty = true;
       rippleColorActive = true;
       lastThemeMode = themeMode;
     }
@@ -560,17 +652,24 @@ function applyRipple(): void {
   });
 }
 
-function clearAll(): void {
-  // 清 opacity 但不清 transition / modifiedBlocks——
-  // transition 保留让淡出有动画；modifiedBlocks 保留供下次 applyBlockOpacity 交替。
+function clearAll(options: { deepScan?: boolean; clearTransition?: boolean } = {}): void {
+  const deepScan = options.deepScan ?? false;
+  const clearTransition = options.clearTransition ?? false;
+  if (!deepScan && !visualStateDirty) return;
+
+  // 普通退出只清 opacity，保留 transition 让淡出有动画；destroy 时额外清 transition。
   modifiedBlocks.forEach((block) => {
+    if (clearTransition) block.style.transition = "";
     block.style.opacity = "";
   });
-  // 兜底：清理已脱离 modifiedBlocks 追踪的残留块（v2.6.0 的 isConnected 检查曾导致漏清）
-  document.querySelectorAll('.protyle-wysiwyg [data-node-id]').forEach((el: Element) => {
-    const htmlEl = el as HTMLElement;
-    if (htmlEl.style.opacity) htmlEl.style.opacity = "";
-  });
+  if (deepScan) {
+    // 兜底：清理已脱离 modifiedBlocks 追踪的残留块（v2.6.0 的 isConnected 检查曾导致漏清）
+    document.querySelectorAll('.protyle-wysiwyg [data-node-id]').forEach((el: Element) => {
+      const htmlEl = el as HTMLElement;
+      if (clearTransition) htmlEl.style.transition = "";
+      htmlEl.style.opacity = "";
+    });
+  }
   cancelSentenceFade();
   if (sentenceHighlightSupported()) CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
   document.documentElement.style.removeProperty("--zt-sentence-dim-color");
@@ -583,6 +682,8 @@ function clearAll(): void {
   lastBlockOpacityScrollTop = null;
   lastBlockOpacityChildCount = null;
   rippleColorActive = false;
+  visualStateDirty = false;
+  modifiedBlocks.clear();
 }
 
 // --- Lifecycle ---
@@ -592,6 +693,8 @@ function onSelectionChange(): void {
 }
 
 export function initRipple(): void {
+  if (initialized) return;
+  initialized = true;
   active = true;
   pendingFrame = null;
 
@@ -609,6 +712,7 @@ export function initRipple(): void {
 }
 
 export function destroyRipple(): void {
+  initialized = false;
   active = false;
   eventListeners.forEach(([event, handler]) => {
     document.removeEventListener(event, handler);
@@ -625,18 +729,6 @@ export function destroyRipple(): void {
     pendingFrame = null;
   }
 
-  clearAll();
-
-  // clearAll 只清 opacity（保留淡出动画），destroy 时彻底清 transition + modifiedBlocks
-  modifiedBlocks.forEach((block) => {
-    block.style.transition = "";
-    block.style.opacity = "";
-  });
-  // 兜底：清理所有编辑器中的残留（脱离追踪的块）
-  document.querySelectorAll('.protyle-wysiwyg [data-node-id]').forEach((el: Element) => {
-    const htmlEl = el as HTMLElement;
-    htmlEl.style.transition = "";
-    htmlEl.style.opacity = "";
-  });
-  modifiedBlocks.clear();
+  // destroy 时彻底清 transition + opacity，并只做一次全局兜底扫描。
+  clearAll({ deepScan: true, clearTransition: true });
 }

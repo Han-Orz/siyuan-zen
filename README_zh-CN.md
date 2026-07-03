@@ -2,16 +2,16 @@
 
 顺滑光标 + 打字机模式 + 涟漪聚焦 — 让思源笔记写作更专注。
 
-> **⚠️ 从 v1.0.6 升级？**
+> **⚠️ 从 v2.x（siyuan-zen）升级？**
 >
-> v2.0.0 把插件的内部 `name` 从 `ZenType` 改成了 `siyuan-zen`（为了满足思源集市"插件 name 必须等于 repo name"的规则）。SiYuan 会把这两个名字当成**两个不同的插件**，所以 v1.0.6 老用户必须：
+> 插件已从 `siyuan-zen` 改名为 `zenType`（v2.6.1），以解决集市同步问题。SiYuan 会把新旧名字当成**两个不同的插件**，所以老用户必须：
 >
-> 1. **先卸载旧版 `ZenType`**（设置 → 插件 → ZenType → 卸载）
-> 2. **再装新版的 `siyuan-zen`**（从 [Releases](../../releases) 下载新 zip）
+> 1. **先卸载旧版 `siyuan-zen`**（设置 → 插件 → siyuan-zen → 卸载）
+> 2. **再装新版的 `zenType`**（从 [Releases](../../releases) 下载新 zip）
 >
 > 不卸载直接装新版，列表里会同时存在两个插件。个人数据/设置不会自动迁移（需要重新开关想要的功能）。
 >
-> **为什么必须改 name？** 思源作者 88250 在 [issue #4](../../issues/4) 亲自要求。不改 name 就无法上架集市。
+> 版本历史：v1.0.6（`ZenType`）→ v2.0.0~2.6.0（`siyuan-zen`）→ v2.6.1+（`zenType`）。详见 [CHANGELOG](../docs/CHANGELOG.md)。
 
 ## 功能
 

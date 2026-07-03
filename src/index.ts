@@ -38,6 +38,7 @@ export default class ZenType extends Plugin {
 
   // 顶栏图标容器引用，供 updateTopBarIcon() 切换 --on / --off class
   private topBarItem: HTMLElement | null = null;
+  private saveEnabledPromise: Promise<unknown> = Promise.resolve();
 
   async onload(): Promise<void> {
     const saved = await this.loadData(STORAGE_KEY);
@@ -219,7 +220,7 @@ export default class ZenType extends Plugin {
       else destroyRipple();
     }
 
-    this.saveData(STORAGE_KEY, this.enabled);
+    this.saveEnabledState();
     this.updateTopBarIcon();
   }
 
@@ -245,12 +246,22 @@ export default class ZenType extends Plugin {
       destroyRipple();
     }
 
-    this.saveData(STORAGE_KEY, this.enabled);
+    this.saveEnabledState();
     this.updateTopBarIcon();
   }
 
   private isAllEnabled(): boolean {
     // v2.3.0：语义改为"typewriter + ripple 两者都开"，不再 include cursor
     return this.enabled.typewriter && this.enabled.ripple;
+  }
+
+  private saveEnabledState(): void {
+    const snapshot = { ...this.enabled };
+    this.saveEnabledPromise = this.saveEnabledPromise
+      .catch(() => undefined)
+      .then(() => this.saveData(STORAGE_KEY, snapshot))
+      .catch((err) => {
+        console.error("[zenType] failed to save enabled state:", err);
+      });
   }
 }

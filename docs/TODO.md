@@ -4,7 +4,7 @@
 - **进度**：
   - [x] 调研根因 + bazaar 校验/清理机制
   - [x] PR #1 删旧 path：plugins.txt 移除 Han-Orz/siyuan-zen → siyuan-note/bazaar#1894（等合并）
-  - [ ] 本仓库改名（plugin.json name/url/version→zenType, zh_CN→zh-CN, make_dev_link.js, README）
+  - [x] 本仓库改名（plugin.json name/url/version→zenType, zh_CN→zh-CN, make_dev_link.js, README）
   - [ ] GitHub repo 改名 siyuan-zen → zenType + 发 v2.6.1 release（package.zip 标 Latest）
   - [ ] PR #2 加新 path：plugins.txt 加 Han-Orz/zenType → 等 stage 收录
 

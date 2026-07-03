@@ -31,7 +31,7 @@ export const CURSOR_CONFIG = {
   HEIGHT_RATIO: 1.05,
 
   /** 光标停止活动后多少毫秒恢复呼吸闪烁（Phase 1 → Phase 2 的间隔）。 */
-  BLINK_DELAY_MS: 1500,
+  BLINK_DELAY_MS: 1100,
 } as const;
 
 /** 打字机参数（光标保持在 38% 位置时滚动到屏幕中心）。 */

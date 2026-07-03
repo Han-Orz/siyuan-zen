@@ -1,22 +1,22 @@
 {
-  "name": "siyuan-zen",
+  "name": "zenType",
   "author": "Han-Orz",
-  "url": "https://github.com/Han-Orz/siyuan-zen",
+  "url": "https://github.com/Han-Orz/zenType",
   "version": "2.6.1",
   "minAppVersion": "3.0.12",
   "backends": ["all"],
   "frontends": ["all"],
   "displayName": {
     "default": "zenType",
-    "zh_CN": "焦点写作"
+    "zh-CN": "焦点写作"
   },
   "description": {
     "default": "Smooth cursor + typewriter mode + ripple focus for distraction-free writing",
-    "zh_CN": "顺滑光标 + 打字机模式 + 涟漪聚焦，让写作更专注"
+    "zh-CN": "顺滑光标 + 打字机模式 + 涟漪聚焦，让写作更专注"
   },
   "readme": {
     "default": "README.md",
-    "zh_CN": "README_zh_CN.md"
+    "zh-CN": "README_zh-CN.md"
   },
   "funding": {},
   "disabledInPublish": false

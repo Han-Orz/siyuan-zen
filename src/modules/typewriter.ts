@@ -10,8 +10,11 @@ const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE, TYPING_GAP_MS, CLICK_
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
 let pendingScrollEnd: number = 0;
+let scrollResyncPending = false;
 let activeFLIPTimer: ReturnType<typeof setTimeout> | null = null;
 let lastFLIPElements: HTMLElement[] = []; // P3-7: 上一轮 FLIP 修改的元素，供下一轮入口清理残留 inline transition
+let flipGeneration = 0;
+let initialized = false;
 
 // debounce / IME 状态（修复 3a/3b/3c）
 let lastInputAt = 0;                                       // 最近一次 input 事件时间戳；0 = 空闲
@@ -50,7 +53,19 @@ function easeInOutCubic(t: number): number {
  * 对比旧版：不逐元素 reflow、不逐元素内层 rAF → 无中间帧残影，定时器从 N×2 降到 2。
  * 防重入：新调用会取消前一轮的 cleanup 定时器，防止覆盖 transform 后又被旧 cleanup 清空。
  */
+function clearLastFLIPElements(): void {
+  for (const el of lastFLIPElements) {
+    if (el.isConnected) {
+      el.style.transform = '';
+      el.style.transition = '';
+    }
+  }
+  lastFLIPElements = [];
+}
+
 function animateBlockShift(editor: HTMLElement): void {
+  const token = ++flipGeneration;
+
   // 取消前一轮 FLIP cleanup，防止连续 Enter 时前一轮 Phase 3 的 setTimeout 清空当前 transform
   if (activeFLIPTimer !== null) {
     clearTimeout(activeFLIPTimer);
@@ -59,13 +74,7 @@ function animateBlockShift(editor: HTMLElement): void {
 
   // P3-7: 清理上一轮 FLIP 残留的 inline transition/transform。连续 Enter 时前一轮
   // cleanup setTimeout 已被上方取消，被 |delta|<2 跳过的元素会永久残留 transition。
-  for (const el of lastFLIPElements) {
-    if (el.isConnected) {
-      el.style.transform = '';
-      el.style.transition = '';
-    }
-  }
-  lastFLIPElements = [];
+  clearLastFLIPElements();
 
   // First: 捕获阶段同步快照所有块的旧位置（在 Enter 的 capture handler 中调用，
   // 此时 SiYuan bubble handler 尚未改 DOM）
@@ -76,6 +85,8 @@ function animateBlockShift(editor: HTMLElement): void {
 
   // 等一帧让 SiYuan 完成 DOM 变更
   requestAnimationFrame(() => {
+    if (token !== flipGeneration) return;
+
     const modifiedElements: HTMLElement[] = [];
 
     // Phase 1 (Invert): 批量写
@@ -99,6 +110,8 @@ function animateBlockShift(editor: HTMLElement): void {
 
     // Phase 3 (Play): 一个 rAF 统一启动
     requestAnimationFrame(() => {
+      if (token !== flipGeneration) return;
+
       for (const el of modifiedElements) {
         el.style.transition = `transform 250ms ${SCROLL_CURVE}`;
         el.style.transform = '';
@@ -108,7 +121,7 @@ function animateBlockShift(editor: HTMLElement): void {
         activeFLIPTimer = null;
       }
       activeFLIPTimer = setTimeout(() => {
-        if (activeFLIPTimer === null) return;  // 被新 FLIP 取消，跳过 cleanup
+        if (token !== flipGeneration || activeFLIPTimer === null) return;  // 被新 FLIP 取消，跳过 cleanup
         activeFLIPTimer = null;
         modifiedElements.forEach(el => {
           el.style.transform = '';
@@ -162,6 +175,11 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
       pendingScroll = requestAnimationFrame(step);
     } else {
       pendingScroll = null;
+      if (scrollResyncPending) {
+        scrollResyncPending = false;
+        lastCheckRect = null;
+        scheduleCheck();
+      }
     }
   }
   pendingScroll = requestAnimationFrame(step);
@@ -183,7 +201,10 @@ function checkAndScroll(): void {
   if (shouldPauseTypewriter()) return;
 
   // 动画进行中：不触发新 scroll，防止连续 keystroke 雪崩到 clamp 边界
-  if (isScrolling()) return;
+  if (isScrolling()) {
+    scrollResyncPending = true;
+    return;
+  }
 
   // IME composition 进行中：硬暂停，避免 per-frame scrollTop 拖动 IME 候选框（修复 3c）
   if (composing) return;
@@ -347,7 +368,47 @@ function centerIfFarOff(target: Element): void {
   });
 }
 
+function elementFromNode(node: Node): Element | null {
+  return node.nodeType === Node.ELEMENT_NODE
+    ? (node as Element)
+    : node.parentElement;
+}
+
+function shouldAnimateBlockShiftForKey(key: string): boolean {
+  if (key === "Enter") return true;
+  if (key !== "Backspace") return false;
+
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return false;
+
+  const range = sel.getRangeAt(0);
+  const startEl = elementFromNode(range.startContainer);
+  if (!startEl) return false;
+
+  const startBlock = startEl.closest('[data-node-id]');
+  if (!startBlock) return false;
+
+  if (!range.collapsed) {
+    const endEl = elementFromNode(range.endContainer);
+    const endBlock = endEl?.closest('[data-node-id]') ?? null;
+    return endBlock !== null && endBlock !== startBlock;
+  }
+
+  const beforeCaret = range.cloneRange();
+  try {
+    beforeCaret.selectNodeContents(startBlock);
+    beforeCaret.setEnd(range.startContainer, range.startOffset);
+  } catch {
+    return true;
+  }
+
+  return beforeCaret.toString().replace(/[\u200B\uFEFF\u00A0]/g, '') === '';
+}
+
 export function initTypewriter(): void {
+  if (initialized) return;
+  initialized = true;
+
   // 事件数组使用三元组以便保留 options
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", scheduleCheck],
@@ -375,6 +436,7 @@ export function initTypewriter(): void {
           cancelAnimationFrame(pendingScroll);
           pendingScroll = null;
         }
+        scrollResyncPending = false;
         if (debounceTimer !== null) {
           clearTimeout(debounceTimer);
           debounceTimer = null;
@@ -408,6 +470,7 @@ export function initTypewriter(): void {
       (e) => {
         const ke = e as KeyboardEvent;
         if (ke.key !== "Enter" && ke.key !== "Backspace") return;
+        const shouldAnimateBlockShift = shouldAnimateBlockShiftForKey(ke.key);
         // Enter/Backspace 后 SiYuan 可能 preventDefault → 不触发 input 事件 → typewriterActive 不被重置
         // 主动激活，确保 checkAndScroll 不在 line 183 早退（修 Enter 不滚的根因）
         inputMode.setBothOn();
@@ -417,7 +480,7 @@ export function initTypewriter(): void {
         const editor = sel.anchorNode?.parentElement?.closest(
           ".protyle-wysiwyg",
         ) as HTMLElement | null;
-        if (editor) animateBlockShift(editor);
+        if (editor && shouldAnimateBlockShift) animateBlockShift(editor);
         // 延迟两帧等 SiYuan 布局收敛后再触发滚动对齐
         // 不能用 scheduleCheck() 唯一一帧，因为思源在 Enter/Backspace 的 bubble
         // handler 中还要修改 DOM，一帧不够——两帧后布局稳定
@@ -432,7 +495,7 @@ export function initTypewriter(): void {
             if (ke.key === "Enter") {
               bypassEmptyBlock = true;
               lastInputAt = 0;
-            } else if (lastFLIPElements.length > 0) {
+            } else if (shouldAnimateBlockShift && lastFLIPElements.length > 0) {
               lastInputAt = 0;
             }
             checkAndScroll();
@@ -456,10 +519,12 @@ export function initTypewriter(): void {
 }
 
 export function destroyTypewriter(): void {
-  eventListeners.forEach(([event, handler]) => {
-    document.removeEventListener(event, handler);
+  eventListeners.forEach(([event, handler, options]) => {
+    document.removeEventListener(event, handler, options);
   });
   eventListeners = [];
+  initialized = false;
+  flipGeneration += 1;
 
   if (pendingScroll !== null) {
     cancelAnimationFrame(pendingScroll);
@@ -475,6 +540,7 @@ export function destroyTypewriter(): void {
     clearTimeout(activeFLIPTimer);
     activeFLIPTimer = null;
   }
+  clearLastFLIPElements();
 
   if (debounceTimer !== null) {
     clearTimeout(debounceTimer);
@@ -485,7 +551,7 @@ export function destroyTypewriter(): void {
   cachedCursorElement = null;
   lastCheckRect = null;
   pendingScrollEnd = 0;
-  lastFLIPElements = [];
+  scrollResyncPending = false;
   composing = false;
   lastInputAt = 0;
   firstCharAfterIdle = false;

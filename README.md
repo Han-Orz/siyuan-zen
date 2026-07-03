@@ -2,14 +2,16 @@
 
 Smooth cursor + typewriter mode + ripple focus for distraction-free writing in SiYuan Note.
 
-> **⚠️ Upgrading from v1.0.6?**
+> **⚠️ Upgrading from v2.x (siyuan-zen)?**
 >
-> The plugin's internal name changed from `ZenType` (v1.0.6) to `siyuan-zen` (v2.0.0) to comply with the SiYuan Bazaar rule that `plugin.json` `name` must match the GitHub repo name. SiYuan treats these as **two different plugins**, so v1.0.6 users must:
+> The plugin has been renamed from `siyuan-zen` to `zenType` (v2.6.1) to resolve bazaar marketplace sync issues. SiYuan treats these as **two different plugins**, so existing users must:
 >
-> 1. **Uninstall the old `ZenType` plugin first** (Settings → Plugins → ZenType → Uninstall)
-> 2. **Then install `siyuan-zen`** using the new zip from [Releases](../../releases)
+> 1. **Uninstall the old `siyuan-zen` plugin first** (Settings → Plugins → siyuan-zen → Uninstall)
+> 2. **Then install `zenType`** using the new zip from [Releases](../../releases)
 >
 > Skipping step 1 will leave both plugins installed side-by-side. Your data and settings are not transferred (you'll need to re-toggle features you want).
+>
+> v1.0.6 (`ZenType`) → v2.0.0-2.6.0 (`siyuan-zen`) → v2.6.1+ (`zenType`). See [CHANGELOG](../docs/CHANGELOG.md) for details.
 
 ## Features
 

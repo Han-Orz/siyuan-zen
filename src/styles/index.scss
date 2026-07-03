@@ -17,7 +17,7 @@
   transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out;
   opacity: 1;
   // 默认开启呼吸动画；breathing.ts 通过 .no-animation 暂停
-  animation: zentype-breathe 3.5s linear infinite;
+  animation: zentype-breathe 3s 1.5s ease-in-out infinite;
 }
 
 // 状态类
@@ -35,19 +35,13 @@
   transition: none !important;
 }
 
-// 呼吸动画关键帧：Sin-curve Breathing（9-keyframe 平滑曲线 + 3% 周期 0-dip 约 105ms）
-// 关键帧按正弦曲线分布；linear easing 让关键帧间插值也呈正弦，
-// 避免 cubic-bezier 在关键帧处"settle"造成的僵硬感
+// 呼吸动画关键帧：缓慢变暗后短暂消失，再回到低亮度并进入下一轮。
 @keyframes zentype-breathe {
-  0%   { opacity: 1.00; }
-  20%  { opacity: 0.92; }
-  40%  { opacity: 0.70; }
-  55%  { opacity: 0.40; }
-  67%  { opacity: 0.10; }
-  70%  { opacity: 0.00; }
-  73%  { opacity: 0.10; }
-  85%  { opacity: 0.55; }
-  100% { opacity: 1.00; }
+  0%   { opacity: 1; }
+  60%  { opacity: 0.9; }
+  90%  { opacity: 0; }
+  95%  { opacity: 0; }
+  100% { opacity: 0.3; }
 }
 
 // commit 2（已下线）：squish / bounce 关键帧。用户测试后认为"弹弓"动画太突兀，
