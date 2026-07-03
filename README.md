@@ -14,7 +14,7 @@ Smooth cursor + typewriter mode + ripple focus for distraction-free writing in S
 ## Features
 
 - **Smooth Cursor** — Custom blue cursor replaces the system caret with smooth transition animation
-- **Typewriter Mode** — Your caret stays at 38% screen height (golden ratio), with a subtle highlight bar tracking it
+- **Typewriter Mode** — Your caret stays at 38% screen height (golden ratio)
 - **Ripple Focus** — The current sentence stays bright while surrounding blocks/sentences gradually dim (CSS Custom Highlight API, zero DOM mutation, no data loss)
 
 ## Installation
@@ -32,17 +32,13 @@ All three features are enabled by default. To toggle:
 
 ## Edge Cases
 
-### Mouse-Centered Ripple (new in v2)
-
-When you're in read-only mode, or when you've stopped typing for 2+ seconds, the ripple focus automatically follows your mouse cursor. As soon as you start typing again, it returns to tracking your text caret.
-
 ### Embedded Blocks
 
 Videos, iframes, and PDF embeds are treated as 1 ripple unit (they fade normally). Typewriter mode skips them (no scroll when cursor is in an embed).
 
 ### Nested Blocks (Simplified in v1)
 
-If your cursor is in a child of a nested block (e.g., a list item inside a list), only the immediate parent layer fades. Outer containers stay at 100% opacity. This is a simplification — recursive fading is planned for v2 if users request it.
+If your cursor is in a child of a nested block (e.g., a list item inside a list), only the immediate parent layer fades. Outer containers stay at 100% opacity. This is a simplification — recursive fading is deferred.
 
 ### Selection (Multi-line)
 
@@ -50,7 +46,7 @@ When you drag-select text, ripple focus and typewriter mode gracefully fade out 
 
 ### Suspended Edits & Popups
 
-Read-only mode and block popups automatically suspend typewriter mode. Ripple focus switches to mouse-centered mode in read-only.
+Read-only mode and block popups automatically suspend typewriter mode and pause ripple focus.
 
 ## Customization (v2.6.0)
 
@@ -58,8 +54,8 @@ Open `src/config.ts` to tweak:
 
 | Parameter | Default | What it does |
 |-----------|---------|--------------|
-| `CURSOR_CONFIG.HEIGHT_RATIO` | `1.1` | Cursor height = line-height × this multiplier |
-| `CURSOR_CONFIG.BLINK_DELAY_MS` | `500` | Idle delay before blink resumes |
+| `CURSOR_CONFIG.HEIGHT_RATIO` | `1.05` | Cursor height = line-height × this multiplier |
+| `CURSOR_CONFIG.BLINK_DELAY_MS` | `1500` | Idle delay before blink resumes |
 | `EDGE_FADE.ZONE` | `20` | Pixels from editor rect edge over which cursor fades out (top + bottom symmetric) |
 | `TRANSITION.TIERS` | `[0.07, 0.15, 0.21, 0.30]` s | Distance-proportional transition duration: short moves snappy, long moves smooth |
 
@@ -82,7 +78,7 @@ When the cursor scrolls off the visible editor area (top or bottom), it stays at
 
 ## Roadmap
 
-See [docs/superpowers/specs/2026-06-27-zentype-redesign-design.md](docs/superpowers/specs/2026-06-27-zentype-redesign-design.md) for the full design.
+See [docs/DESIGN.md](docs/DESIGN.md) for the full design.
 
 ## License
 

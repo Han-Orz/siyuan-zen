@@ -42,6 +42,13 @@ export const TYPEWRITER_CONFIG = {
   SCROLL_DURATION_TIERS: [180, 260, 360, 480, 600],
   /** 块级 FLIP 过渡动画曲线。 */
   SCROLL_CURVE: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+  /** 连续键入停顿阈值（ms）：超过视为"停顿"触发一次居中滚动，小于则视为"连续键入"延后。
+   *  实现"连续键入不滚动，空隙时滚动"的 debounce 行为。空闲超过 2× 此值的首次输入立即滚。 */
+  TYPING_GAP_MS: 400,
+  /** 点击居中阈值下界：仅当 caret 垂直位置 < 此值才主动居中，避免破坏附近点击的滚动定位。 */
+  CLICK_CENTER_LOW: 0.25,
+  /** 点击居中阈值上界：仅当 caret 垂直位置 > 此值才主动居中。 */
+  CLICK_CENTER_HIGH: 0.75,
 } as const;
 
 /* ---------------------------------------------------------------------------
@@ -55,7 +62,7 @@ export const RIPPLE_CONFIG = {
   BLOCK_LEVELS: [1.0, 0.4, 0.2, 0.15, 0.1, 0.05] as const,
   /** 句级 dimming 强度（当前块内非当前句的 color alpha，0-1）。
    *  ::highlight 不支持 opacity，用 rgba color 模拟。当前句=1（无 highlight）。 */
-  SENTENCE_DIM_ALPHA: 0.7,
+  SENTENCE_DIM_ALPHA: 0.6,
   /** 块级 opacity 过渡时长（秒），让 dimming 变化自然。0 = 无过渡。 */
   TRANSITION_SEC: 0.4,
   /** 视觉权重下限（lerp 起点）。视口外的块额外 dim 到此倍数。 */

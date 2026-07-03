@@ -5,14 +5,20 @@ import { shouldPauseTypewriter } from "../utils/edgeCases";
 import * as inputMode from "./inputMode";
 import { isInAllowElements } from "../utils/boundary";
 
-const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE } = TYPEWRITER_CONFIG;
+const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE, TYPING_GAP_MS, CLICK_CENTER_LOW, CLICK_CENTER_HIGH } = TYPEWRITER_CONFIG;
 
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
-let pendingScrollTarget: HTMLElement | null = null;
 let pendingScrollEnd: number = 0;
 let activeFLIPTimer: ReturnType<typeof setTimeout> | null = null;
 let lastFLIPElements: HTMLElement[] = []; // P3-7: 上一轮 FLIP 修改的元素，供下一轮入口清理残留 inline transition
+
+// debounce / IME 状态（修复 3a/3b/3c）
+let lastInputAt = 0;                                       // 最近一次 input 事件时间戳；0 = 空闲
+let composing = false;                                     // IME composition 进行中
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;  // 停顿后触发一次居中滚动的定时器
+let firstCharAfterIdle = false;                            // Option i：空闲后的首个输入立即滚（input 监听器设置，checkAndScroll 消费）
+let bypassEmptyBlock = false;                              // Enter 新建空块时设 true，让空块守卫放行一次
 
 /** isScrolling 由 pendingScroll !== null 推断，无需独立状态管理 — 避免动画结束到定时器置 false 间的竞态窗口 */
 function isScrolling(): boolean {
@@ -26,6 +32,11 @@ let lastCheckRect: { x: number; y: number; width: number; height: number } | nul
 
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
+}
+
+/** 缓起缓收 —— 点击居中用，比 easeOutCubic 更自然（起步不冲，收尾不突兀） */
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 /**
@@ -119,17 +130,18 @@ function durationForDistance(dist: number): number {
 interface SmoothScrollOptions {
   deltaY: number;
   duration?: number;
+  easing?: (t: number) => number;
 }
 
 function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
-  const { deltaY, duration } = options;
+  const { deltaY, duration, easing } = options;
+  const easeFn = easing ?? easeOutCubic;
 
   // 设计决策（TODO-5）：checkAndScroll 的 isScrolling() 守卫在动画进行中直接 return，
   // 新滚动请求被丢弃而非合并。下方 cancelAnimationFrame 为防御性保留（未来若有其他
   // 调用方绕过守卫进入此函数时可安全接管）。
   if (pendingScroll !== null) cancelAnimationFrame(pendingScroll);
 
-  pendingScrollTarget = target;
   pendingScrollEnd = target.scrollTop + deltaY;
 
   const startScroll = target.scrollTop;
@@ -139,7 +151,7 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
   function step() {
     const elapsed = performance.now() - startTime;
     const t = Math.min(elapsed / dur, 1);
-    const eased = easeOutCubic(t);
+    const eased = easeFn(t);
     const maxScroll = target.scrollHeight - target.clientHeight;
     const currentEnd = pendingScrollEnd;
     target.scrollTop = Math.max(0, Math.min(
@@ -150,7 +162,6 @@ function smoothScroll(target: HTMLElement, options: SmoothScrollOptions): void {
       pendingScroll = requestAnimationFrame(step);
     } else {
       pendingScroll = null;
-      pendingScrollTarget = null;
     }
   }
   pendingScroll = requestAnimationFrame(step);
@@ -174,13 +185,16 @@ function checkAndScroll(): void {
   // 动画进行中：不触发新 scroll，防止连续 keystroke 雪崩到 clamp 边界
   if (isScrolling()) return;
 
+  // IME composition 进行中：硬暂停，避免 per-frame scrollTop 拖动 IME 候选框（修复 3c）
+  if (composing) return;
+
   const rect = getCursorRect();
   if (!rect) return;
 
   // 光标未移动则跳过：浏览器可能在 caret blink / IME 更新时反复触发
   // selectionchange，但 getClientRects 返回的 viewport 坐标不变。
   // 避免无意义的 DOM 遍历 + debug 噪声。
-  const prevY = lastCheckRect?.y;
+  const prevY = lastCheckRect?.y;  // 在更新前捕获，供 vertical-jump defer 使用
   if (
     lastCheckRect &&
     Math.abs(rect.x - lastCheckRect.x) < 1 &&
@@ -192,9 +206,12 @@ function checkAndScroll(): void {
   }
   lastCheckRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 
-  // 光标垂直跳跃（>3px）→ 块插入/删除后 SiYuan 布局未收敛，"弹跳"到错误位置
-  // 再纠正回来。推迟一帧等布局稳定。正常打字（同行 x 变 y 不变）不触发。
+  // 垂直跳变 defer：光标 Y 突变 >3px → SiYuan 布局未收敛（块插入/删除后），
+  // 推迟一帧等布局稳定再滚。正常打字（同行 x 变 y 不变）不触发。
+  // 关键修复（3a）：defer 内清 lastCheckRect=null，让 deferred checkAndScroll 通过
+  // equality check（原 bug：deferred check 被 equality check 吞掉 → 首字不滚）。
   if (prevY !== undefined && Math.abs(rect.y - prevY) > 3) {
+    lastCheckRect = null;
     scheduleCheck();
     return;
   }
@@ -225,6 +242,35 @@ function checkAndScroll(): void {
       // 空块时清除 lastCheckRect，使下次（首字符）checkAndScroll 的 prevY=undefined
       // 避免 |firstCharY - emptyBlockY| > 3 触发 defer 级联导致滚动丢失（TODO-6）
       lastCheckRect = null;
+      // Enter 新建空块时绕过守卫 —— 块虽空但用户需要看到它被居中
+      if (bypassEmptyBlock) {
+        bypassEmptyBlock = false;
+        // fall through（不 return）
+      } else {
+        return;
+      }
+    }
+  }
+
+  // debounce：连续键入延后到停顿后再滚一次；空闲态首字立即滚（Option i，修复 3a）
+  // 实现"连续键入不滚动，空隙时滚动"的预期行为（3b 作为功能）
+  // 放在空块守卫之后 —— 否则 Enter 创建的空块会消费掉 firstCharAfterIdle 标志，
+  // 导致用户真正输入首字时标志已丢、走 debounce 延后（Enter/Backspace 行为不一致的根因）
+  if (firstCharAfterIdle) {
+    // Option i：空闲后的首个输入立即滚（input 监听器检测到 wasIdle 并设置此标志）
+    firstCharAfterIdle = false;
+  } else {
+    const now = Date.now();
+    const sinceInput = now - lastInputAt;
+    if (sinceInput < TYPING_GAP_MS) {
+      // 连续键入中：延后到停顿后再滚一次
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        // 清掉 lastCheckRect 防止 equality check 吞掉这次延后触发的滚动
+        lastCheckRect = null;
+        checkAndScroll();
+      }, TYPING_GAP_MS - sinceInput + 1);
       return;
     }
   }
@@ -269,11 +315,92 @@ function checkAndScroll(): void {
   }
 }
 
+/**
+ * 点击居中（Option B）：仅当 caret 垂直位置超出更宽的 [CLICK_CENTER_LOW, CLICK_CENTER_HIGH]
+ * 边界时才主动居中，避免破坏附近点击的滚动定位。绕过 isTypewriterActive / composing / debounce
+ * 门禁（click 是显式定位动作，不是连续键入）。跳过链接 / 按钮以不与思源导航冲突。
+ */
+function centerIfFarOff(target: Element): void {
+  // IME composition 进行中不居中 —— 点击同编辑区不一定会结束 composition，避免拖候选框
+  if (composing) return;
+  if (target.closest('[data-type="a"], button')) return;
+  // 点击后等光标定位稳定（思源 selectionchange 在 click 之后异步触发）
+  requestAnimationFrame(() => {
+    if (composing) return;  // rAF 期间 composition 开始则放弃
+    const rect = getCursorRect();
+    if (!rect) return;
+    const result = isInAllowElements({ x: rect.x, y: rect.y });
+    if (!result.editorRect || !result.cursorElement) return;
+    const container = findClosestScrollableElement(result.cursorElement);
+    if (!container) return;
+    const editorHeight = result.editorRect.bottom - result.editorRect.top;
+    if (editorHeight <= 0) return;
+    const cursorPct = (rect.y - result.editorRect.top) / editorHeight;
+    if (cursorPct >= CLICK_CENTER_LOW && cursorPct <= CLICK_CENTER_HIGH) return;
+    // 居中到视口 0.5 位置（符号约定与 checkAndScroll 一致：deltaY = (cursorPct - target) * h）
+    // 用 easeInOutCubic（缓起缓收）+ 略加时长，比打字滚动的 easeOutCubic 更自然
+    const deltaY = (cursorPct - 0.5) * editorHeight;
+    if (Math.abs(deltaY) >= 1) {
+      const baseDur = durationForDistance(Math.abs(deltaY));
+      smoothScroll(container, { deltaY, easing: easeInOutCubic, duration: Math.round(baseDur * 1.4) });
+    }
+  });
+}
+
 export function initTypewriter(): void {
   // 事件数组使用三元组以便保留 options
   const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
     ["selectionchange", scheduleCheck],
     ["resize", scheduleCheck],
+    // input 事件维护 debounce 心跳（lastInputAt），区分"连续键入"与"停顿"
+    // Option i：若此次 input 前已空闲（>2×gap），设置标志让 checkAndScroll 立即滚而不延后
+    [
+      "input",
+      (e: Event) => {
+        const ie = e as InputEvent;
+        const wasIdle = lastInputAt === 0 || (Date.now() - lastInputAt) > 2 * TYPING_GAP_MS;
+        // 仅 insert 类输入设置 firstCharAfterIdle（Backspace delete 不应绕过 debounce）
+        if (wasIdle && ie.inputType?.startsWith("insert")) firstCharAfterIdle = true;
+        lastInputAt = Date.now();
+      },
+      { capture: true },
+    ],
+    // IME composition 开始：硬暂停 + 取消进行中的 smoothScroll，否则 per-frame scrollTop 会拖候选框（修复 3c）
+    [
+      "compositionstart",
+      () => {
+        composing = true;
+        firstCharAfterIdle = false;  // composition 走自己的路径，不消费 firstChar 标志
+        if (pendingScroll !== null) {
+          cancelAnimationFrame(pendingScroll);
+          pendingScroll = null;
+        }
+        if (debounceTimer !== null) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+      },
+      { capture: true },
+    ],
+    // IME composition 结束：解除暂停，重置 debounce 心跳，调度一次居中检查（走 debounce 路径）
+    [
+      "compositionend",
+      () => {
+        composing = false;
+        firstCharAfterIdle = false;  // post-composition 走 debounce，不立即滚
+        lastInputAt = Date.now();
+        scheduleCheck();
+      },
+      { capture: true },
+    ],
+    // 点击居中（Option B）：仅在 caret 超出 [CLICK_CENTER_LOW, CLICK_CENTER_HIGH] 时居中
+    [
+      "click",
+      (e) => {
+        const target = e.target;
+        if (target instanceof Element) centerIfFarOff(target);
+      },
+    ],
     // Enter / Backspace 块变更 → 块级 FLIP 过渡动画 + 重新对齐舒适区
     // capture 阶段：先于 SiYuan bubble handler，在 DOM 变更前快照块位置
     [
@@ -281,6 +408,9 @@ export function initTypewriter(): void {
       (e) => {
         const ke = e as KeyboardEvent;
         if (ke.key !== "Enter" && ke.key !== "Backspace") return;
+        // Enter/Backspace 后 SiYuan 可能 preventDefault → 不触发 input 事件 → typewriterActive 不被重置
+        // 主动激活，确保 checkAndScroll 不在 line 183 早退（修 Enter 不滚的根因）
+        inputMode.setBothOn();
         // 先触发 FLIP 快照
         const sel = window.getSelection();
         if (!sel || !sel.rangeCount) return;
@@ -295,7 +425,18 @@ export function initTypewriter(): void {
           requestAnimationFrame(() => {
             // 同时清掉 lastCheckRect 让 checkAndScroll 不因坐标未变而跳过
             lastCheckRect = null;
+            // Enter vs Backspace 区别处理：
+            //  - Enter 新建块（常为空）→ 绕过空块守卫 + 立即滚（不等首字输入）
+            //  - Backspace 块级合并（FLIP 检测到块位移 lastFLIPElements.length>0）→ 立即滚
+            //  - Backspace 字符删除（无块位移）→ 不设 lastInputAt=0，走 debounce
+            if (ke.key === "Enter") {
+              bypassEmptyBlock = true;
+              lastInputAt = 0;
+            } else if (lastFLIPElements.length > 0) {
+              lastInputAt = 0;
+            }
             checkAndScroll();
+            bypassEmptyBlock = false;  // 清理（防止泄漏到后续 checkAndScroll）
           });
         });
       },
@@ -335,10 +476,18 @@ export function destroyTypewriter(): void {
     activeFLIPTimer = null;
   }
 
+  if (debounceTimer !== null) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+
   cachedContainer = null;
   cachedCursorElement = null;
   lastCheckRect = null;
-  pendingScrollTarget = null;
   pendingScrollEnd = 0;
   lastFLIPElements = [];
+  composing = false;
+  lastInputAt = 0;
+  firstCharAfterIdle = false;
+  bypassEmptyBlock = false;
 }

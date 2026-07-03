@@ -1,5 +1,81 @@
 # Changelog
 
+## v2.6.1 (2026-07-03) — Typewriter Scroll Bugs + Ripple Opacity 残留修复
+
+### Fixed
+- **3a 首字不滚**：恢复 vertical-jump defer，defer 内清 `lastCheckRect=null` 让 deferred check 通过 equality check（根因：点击→`setBothOff` 使空块守卫未运行，`lastCheckRect` 保留陈旧 Y，首字被 defer 后又被 equality check 吞掉）
+- **3b 连续键入不滚**：加 `input` 监听 + debounce gate（`TYPING_GAP_MS=400`），实现"连续键入不滚动，空隙时滚动"；空闲后首字立即滚（Option i `firstCharAfterIdle`）
+- **3c IME 候选框卡顿**：加 `compositionstart`/`compositionend` 监听 + `composing` 门禁；compositionstart 取消 in-flight smoothScroll，避免 per-frame scrollTop 拖动 IME 候选框
+- **Enter 不滚**：keydown handler 主动 `setBothOn()`（根因：SiYuan Enter preventDefault → 无 input 事件 → `typewriterActive` 不重置 → `checkAndScroll` 早退）
+- **弹跳回归**：恢复 defer 防 t≈16ms selectionchange 路径的瞬态 Y 滚动
+- **Ripple opacity 残留**：移除 `isConnected` 检查（detached 块漏清根因）；`clearAll`/`destroyRipple` 加 `querySelectorAll` 兜底清理；`clearAll` 清 `--zt-sentence-dim-color` CSS 变量
+
+### Added
+- **click 居中**（Option B）：仅当 caret 超出 `[0.25, 0.75]` 时主动居中，`easeInOutCubic` + 加长 40%
+- **Enter/Backspace 区分**：Enter 绕空块守卫 + 立即滚；Backspace 块合并立即滚，字符删除走 debounce
+- `TYPEWRITER_CONFIG.TYPING_GAP_MS` / `CLICK_CENTER_LOW` / `CLICK_CENTER_HIGH` 配置项
+
+### Changed
+- `input` handler 用 `InputEvent.inputType` 区分 insert/delete（Backspace delete 不绕过 debounce）
+- `SENTENCE_DIM_ALPHA` 0.7→0.6
+
+### Removed
+- `pendingScrollTarget` 死变量（retargeting 设计未实现，`isScrolling()` 门禁丢弃新请求）
+- `splitSentencesWithQuotes` 注释代码（22 行，标注"未启用"）
+
+---
+
+## v2.6.0 (2026-07-03) — Ripple Performance Optimization + Config Refactor
+
+### Added
+- **块级 opacity 缓存**（P0-3）：同一顶层块 + 无滚动 + 无块增删时跳过整个 `applyBlockOpacity`，减少 DOM 读
+- **句级 dim 颜色 CSS 变量**：仅在 OFF→ON 或主题切换时设置 `--zt-sentence-dim-color`，避免每帧重写
+- **块级 opacity 过渡动画**：`transition: opacity ${TRANSITION_SEC}s ease`（默认 0.4s）
+- **`SENTENCE_DIM_ALPHA` 配置**：句级 dimming alpha 值（默认 0.7），替代硬编码
+- **`TRANSITION_SEC` 配置**：块级过渡时长（默认 0.4s）
+- **句级 same-sentence 短路缓存**：光标同句内移动跳过 Range/Highlight 重建
+
+### Changed
+- **RIPPLE_CONFIG 重构**：`SENTENCE_LEVELS` → `BLOCK_LEVELS`（新值 `[1.0, 0.4, 0.2, 0.15, 0.1, 0.05]`，参考 Obsidian focus）；`EMBED_MULTIPLIER`/`DEPTH_FACTOR` 移除
+- **`buildTextNodeMap` + `resolveTextNodeAt`**：单次 TreeWalker + 二分查找替代线性扫描，复杂度 `O(S*T)` → `O(T + S log T)`
+- **嵌套块 opacity 修复**：只设顶层块 opacity，嵌套块继承父级，避免叠加（父 0.5 × 子 0.5 = 0.25）
+- **远块跳过**：`distance ≥ 2` 的块跳过 `getBoundingClientRect`，weightFactor 直接取 1.0
+- **句子分割正则增强**：加省略号 `…` 支持 + 小数点保护 `(?<!\d)`
+- **版本号**：`package.json`/`plugin.json` 2.5.0 → 2.6.0
+
+### Removed
+- `isRippleTargetBlock`/`depthOf`/`RIPPLE_TARGET_BLOCK_TYPES`/`RIPPLE_SKIP_BLOCK_TYPES`/`RIPPLE_SKIP_SELECTORS` 死代码
+- `SENTENCE_LEVELS`/`EMBED_MULTIPLIER`/`DEPTH_FACTOR` 配置项
+
+---
+
+## v2.5.0 (2026-07-03) — Ripple CSS Custom Highlight API Rewrite
+
+### Added
+- **CSS Custom Highlight API**：涟漪句级 dimming 从 span 包裹重写为 `CSS.highlights.set()` + `::highlight()`，零 DOM 突变
+- **数据丢失 BUG 修复**：旧 `extractContents()`+`insertNode(span)` 分裂文本节点破坏 SiYuan selection 语义 → 光标飘走 → 内容删除。Highlight API 不修改 DOM，彻底消除冲突
+- **inputMode 订阅**：ripple 订阅 `focusActive→false` 时 `clearAll()`，修复 wheel/blur/click 后 opacity 残留（P1-1）
+- **self-heal**：SiYuan `outerHTML` 交换使 Range 失效后，下次 `selectionchange` 自动用新文本节点重建
+
+### Changed
+- **Ripple 模块简化**：463 → 265 行。仅 `selectionchange` 事件 + inputMode 订阅
+- **`--zt-sentence-dim-color`**：`::highlight` 不支持 opacity，用 `color: rgba()` 模拟（浅色 `rgba(0,0,0,0.88)` / 深色 `rgba(255,255,255,0.88)`）
+
+### Removed
+- span 包裹方案（`getSentences`/`wrapTextRange`/`wrapSentenceIntoHighlightSpan`）
+- `ripple.recompute` 导出（selectionchange 自动重算，无需显式调用）
+- mouse 模式代码（`onMouseMove`/`MOUSE_THROTTLE`/`IDLE_THRESHOLD`）
+- `isEmbedBlock` 函数 + `EMBED_MULTIPLIER` 乘数应用（config 保留作文档）
+
+### Code Review Fixes
+- P1-1: ripple opacity 残留（wheel/blur/click 后）
+- P2-3: smoothScroll 死合并路径
+- P2-5: 死 `isEmbedBlock` + `EMBED_MULTIPLIER` 代码
+- P3-7: FLIP 过渡 style 在被跳过元素上残留
+- P3-8: 非 ripple-target 的 currentBlock opacity=1 泄漏
+
+---
+
 ## v2.3.0 (2026-06-30) — Typewriter Range + Block Insertion + Ripple Sentence
 
 ### Added

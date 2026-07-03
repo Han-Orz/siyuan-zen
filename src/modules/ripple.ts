@@ -229,37 +229,6 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
   lastDimFirstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
 }
 
-/**
- * 备用：双引号内容作为独立句分割（未启用）。
- * 引号内内容（不管有无句号）算一句，引号外按标点分割。
- * 如需启用，在 applySentenceHighlight 里用此函数替换 matches 构建逻辑。
- *
- * 示例："你好"世界。 → ["你好"", "世界。"]
- *       他说"去吗"。 → ["他说", ""去吗"", "。"]
- */
-// function splitSentencesWithQuotes(text: string): Array<{ start: number; end: number }> {
-//   const matches: Array<{ start: number; end: number }> = [];
-//   const pattern = /[""][^""]*[""]|[.?!。？！…]+/g;
-//   let lastIndex = 0;
-//   let m: RegExpExecArray | null;
-//   while ((m = pattern.exec(text)) !== null) {
-//     const isQuote = m[0].charAt(0) === '"' || m[0].charAt(0) === '"';
-//     const end = m.index + m[0].length;
-//     if (isQuote) {
-//       if (m.index > lastIndex) matches.push({ start: lastIndex, end: m.index });
-//       matches.push({ start: m.index, end });
-//       lastIndex = end;
-//     } else {
-//       if (end <= lastIndex) continue;
-//       matches.push({ start: lastIndex, end });
-//       lastIndex = end;
-//     }
-//   }
-//   if (lastIndex < text.length) matches.push({ start: lastIndex, end: text.length });
-//   if (matches.length === 0) matches.push({ start: 0, end: text.length });
-//   return matches;
-// }
-
 // --- Block-level opacity ---
 
 function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): void {
@@ -318,7 +287,7 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
 
   // 不在新列表里的旧块：清 opacity（transition 仍在，淡出到 1）
   modifiedBlocks.forEach((block) => {
-    if (block.isConnected && !newBlocks.has(block)) {
+    if (!newBlocks.has(block)) {
       block.style.opacity = "";
     }
   });
@@ -373,9 +342,15 @@ function clearAll(): void {
   // 清 opacity 但不清 transition / modifiedBlocks——
   // transition 保留让淡出有动画；modifiedBlocks 保留供下次 applyBlockOpacity 交替。
   modifiedBlocks.forEach((block) => {
-    if (block.isConnected) block.style.opacity = "";
+    block.style.opacity = "";
+  });
+  // 兜底：清理已脱离 modifiedBlocks 追踪的残留块（v2.6.0 的 isConnected 检查曾导致漏清）
+  document.querySelectorAll('.protyle-wysiwyg [data-node-id]').forEach((el: Element) => {
+    const htmlEl = el as HTMLElement;
+    if (htmlEl.style.opacity) htmlEl.style.opacity = "";
   });
   if ("highlights" in CSS) CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+  document.documentElement.style.removeProperty("--zt-sentence-dim-color");
   // 重置缓存：视觉状态已清，下次 apply 必须重建。
   lastBlockOpacityBlockId = null;
   lastBlockOpacityContainerTop = null;
@@ -428,10 +403,14 @@ export function destroyRipple(): void {
 
   // clearAll 只清 opacity（保留淡出动画），destroy 时彻底清 transition + modifiedBlocks
   modifiedBlocks.forEach((block) => {
-    if (block.isConnected) {
-      block.style.transition = "";
-      block.style.opacity = "";
-    }
+    block.style.transition = "";
+    block.style.opacity = "";
+  });
+  // 兜底：清理所有编辑器中的残留（脱离追踪的块）
+  document.querySelectorAll('.protyle-wysiwyg [data-node-id]').forEach((el: Element) => {
+    const htmlEl = el as HTMLElement;
+    htmlEl.style.transition = "";
+    htmlEl.style.opacity = "";
   });
   modifiedBlocks.clear();
 }
