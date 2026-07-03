@@ -132,18 +132,30 @@ body.zentype-cursor-active .protyle-title__input { caret-color: transparent; }
 
 // ===== 涟漪聚焦句级 dimming (CSS Custom Highlight API) =====
 // v2.5.0：废弃 span 包裹，改用 CSS Custom Highlight API（零 DOM 突变）
-// ::highlight 不支持 opacity/transition，用 color 模拟 dim。句级 dimming 为瞬变（无动画）。
+// ::highlight 不支持 opacity/transition，用 color 模拟 dim；跨句时由 ripple.ts 用 rAF 插值当前句切换。
 // 局限：currentColor 在 ::highlight 里指 highlight 自身，无法"相对原色 dim"。
 // 彩色文字（mark/链接）会被覆盖成灰/白，只能按主题设固定 RGB。
 // CSS 变量值由 ripple.ts applyRipple() 根据 config.SENTENCE_DIM_ALPHA + 主题动态覆盖。
 :root {
-  --zt-sentence-dim-color: rgba(0, 0, 0, 0.7);
+  --zt-sentence-dim-color: rgba(0, 0, 0, 0.6);
+  --zt-sentence-fade-in-color: rgba(0, 0, 0, 1);
+  --zt-sentence-fade-out-color: rgba(0, 0, 0, 0.6);
 }
 
 [data-theme-mode="dark"] {
-  --zt-sentence-dim-color: rgba(255, 255, 255, 0.7);
+  --zt-sentence-dim-color: rgba(255, 255, 255, 0.6);
+  --zt-sentence-fade-in-color: rgba(255, 255, 255, 1);
+  --zt-sentence-fade-out-color: rgba(255, 255, 255, 0.6);
 }
 
 ::highlight(zt-sentence-dim) {
   color: var(--zt-sentence-dim-color);
+}
+
+::highlight(zt-sentence-fade-in) {
+  color: var(--zt-sentence-fade-in-color);
+}
+
+::highlight(zt-sentence-fade-out) {
+  color: var(--zt-sentence-fade-out-color);
 }

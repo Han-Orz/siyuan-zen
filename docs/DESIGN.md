@@ -1,4 +1,4 @@
-# zenType 设计文档（v2.6.0）
+# zenType 设计文档（v2.6.1）
 
 > **本文件合并自 `docs/FOCUS_TYPEWRITER_DESIGN.md`（已删除）+ 早期 `TODO.md`（已删除）的设计段。**
 > **代码即真相，本文档跟随代码，不是反过来。**
@@ -18,7 +18,7 @@
 
 **核心价值**：让用户进入"心流"状态 —— 不用低头找光标、不被周围段落干扰。
 **设计哲学**：聚焦是**主动行为**（用户主动输入或命令触发），不是默认状态（"禅"）。
-**当前版本**：v2.6.0（`package.json` / `plugin.json`）。
+**当前版本**：v2.6.1（`package.json` / `plugin.json`）。
 
 ---
 
@@ -449,7 +449,7 @@ function animateBlockShift(editor: HTMLElement): void {
 
 块级插入动画跑完后，ripple 模块通过事件自动接管——typewriter 不再显式调用 ripple（v2.5.0 移除了 `ripple.recompute`，§4.3.6）：
 - Enter / Backspace 后光标移入新块 → 触发 `selectionchange` → `applyRipple` 重算
-- 当前句 / 块 = 1.0；邻近块按句级 / 块级 + 视觉权重 + 列表深度综合计算（嵌入块已被 `isRippleTargetBlock` 排除）
+- 当前句稳定态保持原文字色；当前块 opacity 固定为 1.0；邻近顶层块按块级梯度 + 视觉权重计算
 
 §3 typewriter **不直接设 opacity**，opacity 完全交给 §4 ripple。
 
@@ -457,15 +457,14 @@ function animateBlockShift(editor: HTMLElement): void {
 
 ## 4. 涟漪聚焦 (Ripple Focus)
 
-### 4.1 想要的效果（v2.5.0 重写：CSS Custom Highlight API）
+### 4.1 想要的效果（v2.6.1 更新：CSS Custom Highlight API + 句级 fade）
 
-- **当前输入句**保持默认色（最亮）；当前块的**其它句**用 `::highlight(zt-sentence-dim)` 染色为 `color: rgba(0,0,0,0.88)`（浅色）/ `rgba(255,255,255,0.88)`（深色）——按 `.`、`?`、`!`、`。`、`？`、`！` 切句，**句级**而非仅块级
-- 相邻 ±1 块 opacity ≈ 0.72
-- 相邻 ±2 块 opacity ≈ 0.55
-- 相邻 ±3 块以外 opacity ≈ 0.42
-- **块级** dimming 仍用 JS `style.opacity`；**句级** dimming 用 CSS Custom Highlight API（零 DOM 突变，§4.3.3）
-- **嵌入块**：`isRippleTargetBlock` 在进入块级计算前已排除 iframe/video/NodeIFrame/NodeVideo/NodePDF/NodeBlockQueryEmbed，`EMBED_MULTIPLIER`（config.ts:56）不再生效，保留作设计文档（TODO: 区分不同块类型，见 §4.6）
-- **列表块**走动态算法（Q5 = C，§4.3.4）：视觉权重（子项可见高度 / 视窗高度）× 列表深度系数
+- **当前输入句**稳定态保持默认文字色（最亮）；当前块的**其它句**用 `::highlight(zt-sentence-dim)` 染色为 `color: rgba(0,0,0,0.6)`（浅色）/ `rgba(255,255,255,0.6)`（深色）——按 `.`、`?`、`!`、`。`、`？`、`！`、`…` 切句，**句级**而非仅块级
+- **句级切换动画**：旧当前句用 `zt-sentence-fade-out` 从原文字色插值到 dim 色；新当前句用 `zt-sentence-fade-in` 从 dim 色插值到原文字色；动画由 `requestAnimationFrame` + `easeInOutCubic` 驱动，不依赖 CSS transition
+- 当前块 opacity = 1.0，不参与视觉权重衰减；相邻 ±1 块 opacity ≈ 0.4 × 视觉权重
+- 相邻 ±2 块 opacity ≈ 0.2；更远按 `[0.15, 0.1, 0.05]` 继续衰减
+- **块级** dimming 仍用 JS `style.opacity`；**句级** dimming / fade 用 CSS Custom Highlight API（零 DOM 突变，§4.3.3）
+- **嵌套块**继承顶层块 opacity；v2.6.0 起不再按块类型递归处理，也不再使用 `EMBED_MULTIPLIER` / 深度系数
 - **默认 OFF** —— 打开文档看不到任何涟漪，必须先输入才出现（Q3 决策）
 - **暂停场景**：选中 / 悬浮窗 → `clearAll()` 清除所有块级 opacity 覆盖 + `CSS.highlights.delete`，恢复默认
 
@@ -474,13 +473,14 @@ function animateBlockShift(editor: HTMLElement): void {
 | 决策 | 值 | 文件:行 | 理由 |
 |---|---|---|---|
 | **默认 OFF** | `focusActive = false` 启动 | `inputMode.ts:15` | Q3：聚焦是"主动行为"不是默认状态 |
-| **句级粒度**（v2.5.0 改 Highlight API） | 按 `.?!。？！` 切句 | `ripple.ts:147-192` `applySentenceHighlight` | 用户偏好"看清整句"，不只是块；v2.5.0 废弃 `getSentences`/span 包裹 |
-| **句级 / 块级 opacity 梯度** | `[1.0, 0.88, 0.72, 0.55, 0.42]` 5 档 | `config.ts` `RIPPLE_SENTENCE_LEVELS` | v2.3.0 新增，替换 v2.2.1 的 6 档块级 |
-| **嵌入块修正** | × 0.85（**死代码**） | `config.ts:56` `EMBED_MULTIPLIER` | `isRippleTargetBlock` 在乘数前已排除 embed 类型，乘数不生效；保留作设计文档（P2-5） |
-| **列表块算法**（v2.3.0 新增） | 视觉权重 × 深度系数 | `ripple.ts` 新增 `visualWeightOf` + `depthOf` | Q5 = C：动态算法匹配人眼感知 |
-| **深度系数衰减**（v2.3.0 新增） | 每深一层 × 0.95 | `config.ts` `RIPPLE_DEPTH_FACTOR` | 嵌套深的项视觉占比小 |
-| **应用方式** | 块级 `style.opacity`；句级 CSS Custom Highlight API | `ripple.ts:221` / `:188` | 块级简单直接；句级零 DOM 突变（v2.5.0，避免数据丢失） |
-| **渐淡单位** | `.protyle-wysiwyg [data-node-id]` + iframe/video | `ripple.ts:207` | 块级（嵌入块被 `isRippleTargetBlock` 排除，不参与 dimming）；嵌套块 v1 简化方案（不递归） |
+| **句级粒度**（v2.5.0 改 Highlight API） | 按 `.?!。？！…` 切句，小数点保护 | `ripple.ts` `splitSentences` / `applySentenceHighlight` | 用户偏好"看清整句"，不只是块；v2.5.0 废弃 `getSentences`/span 包裹 |
+| **块级 opacity 梯度** | `[1.0, 0.4, 0.2, 0.15, 0.1, 0.05]` | `config.ts` `BLOCK_LEVELS` | v2.6.0 参考 Obsidian focus，增强聚焦对比 |
+| **句级 dim alpha** | `SENTENCE_DIM_ALPHA = 0.6` | `config.ts` `SENTENCE_DIM_ALPHA` | v2.6.1 调低非当前句亮度，当前句稳定态保持原色 |
+| **句级切换动画** | `zt-sentence-fade-out` + `zt-sentence-fade-in`，rAF 颜色插值 | `ripple.ts` `startSentenceFade` | `::highlight` 不支持 transition，用 JS 驱动颜色插值且保持零 DOM 突变 |
+| **当前块 opacity** | `distance === 0` 强制 `1.0` | `ripple.ts` `applyBlockOpacity` | 防止当前块因 `visualWeightOf` 小于 1 导致当前句比非聚焦模式淡 |
+| **视觉权重** | 仅 distance=1 的相邻块参与；distance≥2 跳过布局回读 | `ripple.ts` `visualWeightOf` / `applyBlockOpacity` | 相邻块过渡更自然，远块差异不可感知 |
+| **应用方式** | 块级 `style.opacity`；句级 CSS Custom Highlight API | `ripple.ts` / `styles/index.scss` | 块级简单直接；句级零 DOM 突变（v2.5.0，避免数据丢失） |
+| **渐淡单位** | `.protyle-wysiwyg` 的顶层 `container.children` | `ripple.ts` `getTopLevelBlock` / `applyBlockOpacity` | 嵌套块继承父级 opacity，避免父子叠乘 |
 | **重新计算接口** | ~~`ripple.recompute`~~（v2.5.0 移除） | — | 块级插入后光标移入新块 → `selectionchange` → `applyRipple` 自动重算，无需显式调用（§4.3.6） |
 | **mouse 模式** | **已移除**（v2.5.0 重写时清理） | — | Q3：用户暂未决定应用场景。旧 `onMouseMove` / `MOUSE_THROTTLE` / `IDLE_THRESHOLD` / 滚动条缓冲随重写删除；未来恢复需重建（§4.4） |
 
@@ -494,7 +494,7 @@ let mode: RippleMode = "text";   // "text" | "mouse" | "paused"
 
 `RippleMode` 类型（`types/index.ts:3`）保留 `"mouse"` 变体以备未来恢复时不破坏类型契约。
 
-#### 4.3.2 主循环（`ripple.ts:230-255` applyRipple + `196-226` applyBlockOpacity + `147-192` applySentenceHighlight，v2.5.0 重构）
+#### 4.3.2 主循环（`applyRipple` + `applyBlockOpacity` + `applySentenceHighlight`，v2.6.1 更新）
 
 ```
 applyRipple():  // rAF 节流（pendingFrame 标志）
@@ -520,44 +520,63 @@ applyRipple():  // rAF 节流（pendingFrame 标志）
     if (!block.hasAttribute("data-node-id")) return
     distance = abs(fromIndex - i)
     baseOpacity = BLOCK_LEVELS[min(distance, len(BLOCK_LEVELS)-1)]
-    weightFactor = distance >= 2 ? 1.0 : visualWeightOf(block, editorRect)
+    weightFactor =
+      distance === 0 ? 1.0 :
+      distance >= 2 ? 1.0 :
+      WEIGHT_MIN + visualWeightOf(block, editorRect) * (1 - WEIGHT_MIN)
     block.style.transition = `opacity ${TRANSITION_SEC}s ease`
     block.style.opacity = String(baseOpacity * weightFactor)
   })
 
-  // 2) 句级 dimming（CSS Custom Highlight API，零 DOM 突变，§4.3.3）
+  // 2) 句级 dimming / fade（CSS Custom Highlight API，零 DOM 突变，§4.3.3）
   textNodeMap = buildTextNodeMap(currentBlock)  // 单次 TreeWalker
   caretOffset = getCaretOffset(currentBlock, textNodeMap)
   if (caretOffset !== null):
-    applySentenceHighlight(currentBlock, caretOffset, textNodeMap)  // 给非当前句染色
+    applySentenceHighlight(currentBlock, caretOffset, textNodeMap)  // 给非当前句染色；跨句时启动 fade
   else:
     CSS.highlights.delete("zt-sentence-dim")
+    CSS.highlights.delete("zt-sentence-fade-in")
+    CSS.highlights.delete("zt-sentence-fade-out")
 ```
 
-#### 4.3.3 句级 dimming（CSS Custom Highlight API，v2.5.0 重写）
+#### 4.3.3 句级 dimming / fade（CSS Custom Highlight API，v2.6.1 更新）
 
-v2.5.0 废弃 span 包裹，改用 [CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API) 标记非当前句。**零 DOM 突变**——只在已有文本节点上构造 `Range` 对象，注册到 `CSS.highlights`，由 `::highlight(zt-sentence-dim)` 染色。
+v2.5.0 废弃 span 包裹，改用 [CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API) 标记非当前句。**零 DOM 突变**——只在已有文本节点上构造 `Range` 对象，注册到 `CSS.highlights`，由 `::highlight(...)` 染色。
+
+v2.6.1 在同一套 Highlight API 上增加跨句切换动画：稳定态只保留 `zt-sentence-dim`；光标从旧句移到新句时，临时排除旧句和新句的稳定 dim，高亮旧句为 `zt-sentence-fade-out`、新句为 `zt-sentence-fade-in`，用 rAF 修改 CSS 变量完成颜色插值。动画结束后删除两个临时 highlight，恢复只排除当前句的稳定 dim。
 
 ```typescript
-// ripple.ts:39
 const SENTENCE_DIM_HIGHLIGHT = "zt-sentence-dim";
+const SENTENCE_FADE_IN_HIGHLIGHT = "zt-sentence-fade-in";
+const SENTENCE_FADE_OUT_HIGHLIGHT = "zt-sentence-fade-out";
 
-// ripple.ts:147  applySentenceHighlight(block, caretOffset)
-//   1. textContent 按正则 /[.?!。？！]+/g 切句
-//   2. 为"不含光标"的每句构造 Range（setStart/setEnd 到对应 Text 节点 + 偏移）
+// applySentenceHighlight(block, caretOffset)
+//   1. textContent 按正则 /(?<!\d)[.?!。？！…]+(?!\d)/g 切句
+//   2. 为"不含光标"的每句构造 Range
 //   3. CSS.highlights.set("zt-sentence-dim", new Highlight(...dimRanges))
-//   4. 光标所在句不进 dimRanges → 保持默认色（最亮）
+//   4. 若当前句 start 与上次不同：
+//      - stable dim 临时排除旧当前句 + 新当前句
+//      - fade-out: textColor → dimColor
+//      - fade-in: dimColor → textColor
+//      - requestAnimationFrame + easeInOutCubic 驱动 CSS 变量
 ```
 
-样式（`styles/index.scss:136-146`）：
+样式（`styles/index.scss`）：
 
 ```scss
-:root { --zt-sentence-dim-color: rgba(0, 0, 0, 0.88); }              // 浅色
-[data-theme-mode="dark"] { --zt-sentence-dim-color: rgba(255, 255, 255, 0.88); }  // 深色
+:root {
+  --zt-sentence-dim-color: rgba(0, 0, 0, 0.6);
+  --zt-sentence-fade-in-color: rgba(0, 0, 0, 1);
+  --zt-sentence-fade-out-color: rgba(0, 0, 0, 0.6);
+}
 ::highlight(zt-sentence-dim) { color: var(--zt-sentence-dim-color); }
+::highlight(zt-sentence-fade-in) { color: var(--zt-sentence-fade-in-color); }
+::highlight(zt-sentence-fade-out) { color: var(--zt-sentence-fade-out-color); }
 ```
 
-**为什么不用 opacity**：`::highlight()` 伪元素只支持 `color` / `background-color` / `text-decoration` / `text-shadow` / `-webkit-text-fill-color`，**不支持 `opacity`**。句级 dimming 用 `color: rgba(…,0.88)` 模拟——对纯文字视觉等效于 0.88 opacity。块级 dimming 仍用 `style.opacity`（见 §4.3.2）。
+`styles/index.scss` 的变量是兜底值；运行时 `ripple.ts` 会按主题和 `SENTENCE_DIM_ALPHA` 写入实际颜色。当前代码中 `SENTENCE_DIM_ALPHA = 0.6`。
+
+**为什么不用 opacity**：`::highlight()` 伪元素只支持 `color` / `background-color` / `text-decoration` / `text-shadow`（[css-pseudo-4 §3.2](https://drafts.csswg.org/css-pseudo-4/#highlight-styling) 规范明列），**不支持 `opacity`、也不支持厂商前缀属性（如 `-webkit-text-fill-color`）或 `transition`**。句级 dimming 用 `color: rgba(…,0.6)` 模拟；句级 fade 用 rAF 插值 `color`，不走 CSS transition。块级 dimming 仍用 `style.opacity`（见 §4.3.2）。
 
 **为什么废弃 span 包裹**（数据丢失 BUG 根因）：旧 `wrapTextRange` 用 `range.extractContents()` + `range.insertNode(span)` 把文本节点分裂到 `<span>` 内。SiYuan 的 input/keydown 处理器在 DOM 突变后重新查询选区，选区跨越 `<span>` 边界时语义改变 → 光标飘走 → 在 `。/？/！` 后继续打字会删除已有内容。Highlight API 不修改 DOM，彻底消除此冲突。
 
@@ -644,12 +663,12 @@ onSelectionChange():  // 唯一注册的事件
 
 ```typescript
 BLOCK_LEVELS: [1.0, 0.4, 0.2, 0.15, 0.1, 0.05]  // 块级 opacity 梯度（按距离衰减，v2.6.0 替换 SENTENCE_LEVELS）
-SENTENCE_DIM_ALPHA: 0.7                           // 句级 dimming alpha（v2.6.0 新增，替代 EMBED_MULTIPLIER/DEPTH_FACTOR 组合）
-TRANSITION_SEC: 0.4                               // 块级 opacity 过渡时长（秒），v2.6.0 新增
+SENTENCE_DIM_ALPHA: 0.6                           // 句级 dimming alpha（v2.6.1 调整）
+TRANSITION_SEC: 0.4                               // 块级 opacity 过渡 + 句级 fade 插值时长（秒）
 WEIGHT_MIN: 0.85                                  // 视觉权重下限（lerp 起点）
 ```
 
-> v2.6.0 重构：`SENTENCE_LEVELS`/`EMBED_MULTIPLIER`/`DEPTH_FACTOR` → `BLOCK_LEVELS`/`SENTENCE_DIM_ALPHA`/`TRANSITION_SEC`。句级 dimming 的 alpha 由 `SENTENCE_DIM_ALPHA` 统一控制（之前为硬编码 0.88）。`--zt-sentence-dim-color` 现在由 `applyRipple()` 根据主题动态设置（ripple.ts:350-358），不再硬写在 SCSS 中。
+> v2.6.0 重构：`SENTENCE_LEVELS`/`EMBED_MULTIPLIER`/`DEPTH_FACTOR` → `BLOCK_LEVELS`/`SENTENCE_DIM_ALPHA`/`TRANSITION_SEC`。句级 dimming 的 alpha 由 `SENTENCE_DIM_ALPHA` 统一控制（之前为硬编码 0.88）。v2.6.1 复用 `TRANSITION_SEC` 作为句级 fade-in/fade-out 的 rAF 插值时长。
 
 ### 4.6 TODO
 
@@ -824,8 +843,8 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | 打字机 | `TYPEWRITER_CONFIG` | **`SCROLL_DURATION_TIERS`** | **`[180, 260, 360, 480, 600]` ms** | **v2.3.0：距离分档时长（从 typewriter.ts 移入 config）** |
 | 打字机 | `TYPEWRITER_CONFIG` | **`SCROLL_CURVE`** | **`cubic-bezier(0.25, 0.1, 0.25, 1)`** | **v2.3.0：动画曲线（与光标一致）** |
 | 涟漪 | `RIPPLE_CONFIG` | **`BLOCK_LEVELS`** | **`[1.0, 0.4, 0.2, 0.15, 0.1, 0.05]`** | **v2.6.0：块级 opacity 梯度（替换 SENTENCE_LEVELS）** |
-| 涟漪 | `RIPPLE_CONFIG` | **`SENTENCE_DIM_ALPHA`** | **`0.7`** | **v2.6.0 新增：句级 dimming alpha** |
-| 涟漪 | `RIPPLE_CONFIG` | **`TRANSITION_SEC`** | **`0.4`** | **v2.6.0 新增：块级 opacity 过渡时长（秒）** |
+| 涟漪 | `RIPPLE_CONFIG` | **`SENTENCE_DIM_ALPHA`** | **`0.6`** | **v2.6.1 调整：句级 dimming alpha** |
+| 涟漪 | `RIPPLE_CONFIG` | **`TRANSITION_SEC`** | **`0.4`** | **v2.6.1 复用：块级 opacity 过渡 + 句级 fade 插值时长（秒）** |
 | 涟漪 | `RIPPLE_CONFIG` | `WEIGHT_MIN` | `0.85` | 视觉权重 lerp 下限 |
 
 ### 8.2 "暂停功能"入口
@@ -853,6 +872,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | **v2.3.0 (Typewriter Range + Block Insertion + Ripple Sentence)** | 2026-06-30 | 舒适区间 + 曲线原语 + 块级插入 FLIP + 涟漪句级 + 列表动态算法 + 雾边圆环图标 + wheel exit 修复 |
 | **v2.5.0 (Ripple Highlight API + CR 收尾)** | 2026-07-03 | ripple 句级从 span 包裹重写为 CSS Custom Highlight API（零 DOM 突变，修复数据丢失 bug）；P1-1/P2-3/P2-5/P3-7/P3-8 代码审查修复；TODO-6 首字滚动修复 |
 | **v2.6.0 (Ripple 性能优化 + 配置重构)** | 2026-07-03 | buildTextNodeMap 单次 TreeWalker + 二分查找；块级缓存 + 远块跳过；BLOCK_LEVELS/SENTENCE_DIM_ALPHA/TRANSITION_SEC 替换旧配置；嵌套块 opacity 继承；删除 isRippleTargetBlock 等死代码 |
+| **v2.6.1 (Typewriter 修复 + Ripple 句级 fade)** | 2026-07-03 | typewriter 连续输入/点击居中修复；ripple 句级 fade-in/fade-out；当前块 opacity 强制 1.0，避免当前句稳定态偏淡 |
 
 ### 9.2 cursor 模块决策（Round 5 → Round 11）
 
@@ -941,7 +961,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | 决策 | 内容 | 理由 |
 |---|---|---|
 | BLOCK_LEVELS 替换 SENTENCE_LEVELS | 块级 opacity 梯度从 `[1.0, 0.88, 0.72, 0.55, 0.42]` → `[1.0, 0.4, 0.2, 0.15, 0.1, 0.05]` | 参考 Obsidian focus 模式，更明显的聚焦效果 |
-| SENTENCE_DIM_ALPHA 新增 | 句级 dimming alpha 统一为 0.7 | 替代 EMBED_MULTIPLIER/DEPTH_FACTOR 组合，简化配置 |
+| SENTENCE_DIM_ALPHA 新增 | 句级 dimming alpha 统一为 0.7（v2.6.1 调整为 0.6） | 替代 EMBED_MULTIPLIER/DEPTH_FACTOR 组合，简化配置 |
 | TRANSITION_SEC | 块级 opacity 过渡 0.4s | 让 dimming 变化自然 |
 | buildTextNodeMap + resolveTextNodeAt | 单次 TreeWalker + 二分查找 | 复杂度 O(S*T) → O(T+S log T) |
 | 块级缓存 | 同一块 + 无滚动 + 无改动时跳过 | 减少 DOM 读，优化帧率 |
@@ -950,7 +970,17 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | 删除死代码 | isRippleTargetBlock/depthOf 等全部删除 | 简化维护面 |
 | 句子分割加省略号 | 正则加 `…` + 小数点保护 `(?<!\d)` | 用户有省略号分段需求 |
 
-### 9.10 明确推迟项
+### 9.10 v2.6.1 决策（2026-07-03）— Typewriter 修复 + Ripple 句级 fade
+
+| 决策 | 内容 | 理由 |
+|---|---|---|
+| 句级 fade-in/fade-out | 新当前句 `dimColor → textColor`，旧当前句 `textColor → dimColor`，由 `requestAnimationFrame` + `easeInOutCubic` 驱动 | CSS Custom Highlight API 不支持 transition；多 highlight 名称能在零 DOM 突变下表达两个临时动画层 |
+| fade 复用缓存 | 基于 `lastCaretSentenceRange` 判断当前句 start 是否变化 | 光标在同一句内移动不重建动画，只有跨句切换才启动 fade |
+| 稳定 dim 排除动画两端 | 动画期间 `zt-sentence-dim` 同时排除旧当前句和新当前句 | 避免稳定 dim 与 fade 临时 highlight 重叠导致颜色优先级不确定 |
+| 当前块 opacity 固定 1.0 | `distance === 0` 不再乘 `visualWeightOf` | 修复当前块在视窗边缘时整体 opacity 小于 1，导致当前句比非聚焦模式淡 |
+| SENTENCE_DIM_ALPHA 调整 | `0.7 → 0.6` | 拉开当前句与非当前句的可见对比 |
+
+### 9.11 明确推迟项
 
 | 项 | 状态 | 来源 |
 |---|---|---|
@@ -985,12 +1015,12 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 
 | 文件 | 当前 | 备注 |
 |---|---|---|
-| `package.json` `version` | `2.6.0` | v2.6.0 发布版本 |
-| `plugin.json` `version` | `2.6.0` | 同上 |
-| `docs/CHANGELOG.md` | ✅ 已维护 | 位于 docs/CHANGELOG.md，覆盖 v2.0~v2.6.0 |
+| `package.json` `version` | `2.6.1` | v2.6.1 当前版本 |
+| `plugin.json` `version` | `2.6.1` | 同上 |
+| `docs/CHANGELOG.md` | ✅ 已维护 | 位于 docs/CHANGELOG.md，覆盖 v2.0~v2.6.0；v2.6.1 变更见本文件 §9.10 |
 
-> v2.6.0 为 Ripple 性能优化里程碑。`version` 字段从 v2.3.0 → v2.5.0（跳过 2.4，Highlight API 重写）→ v2.6.0。
+> v2.6.0 为 Ripple 性能优化里程碑。`version` 字段从 v2.3.0 → v2.5.0（跳过 2.4，Highlight API 重写）→ v2.6.0 → v2.6.1。
 
 ---
 
-**最后更新**：2026-07-03（v2.5.0 + v2.6.0 Ripple 性能优化 + Highlight API 重构）
+**最后更新**：2026-07-03（v2.6.1 Typewriter 修复 + Ripple 句级 fade-in/fade-out）

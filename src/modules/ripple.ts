@@ -16,7 +16,7 @@
  * v2.5.0 变更：废弃 span 包裹（extractContents + insertNode），改用 CSS Custom Highlight API。
  *   原因：span 包裹分裂文本节点，SiYuan 的 input/transaction 处理器在突变后重新查选区时
  *   选区语义改变 → 光标飘走 + 内容丢失。Highlight API 不修改 DOM，彻底消除此冲突。
- *   trade-off：::highlight 不支持 opacity，句级 dimming 用 color 模拟（对纯文字视觉等效）。
+ *   trade-off：::highlight 不支持 opacity/transition，句级切换用 color + rAF 插值模拟。
  */
 
 import { getCursorElement } from "../utils/getCursorElement";
@@ -28,6 +28,9 @@ const { BLOCK_LEVELS, SENTENCE_DIM_ALPHA, TRANSITION_SEC, WEIGHT_MIN } = RIPPLE_
 
 /** CSS Custom Highlight API 注册名。 */
 const SENTENCE_DIM_HIGHLIGHT = "zt-sentence-dim";
+const SENTENCE_FADE_IN_HIGHLIGHT = "zt-sentence-fade-in";
+const SENTENCE_FADE_OUT_HIGHLIGHT = "zt-sentence-fade-out";
+const SENTENCE_FADE_MS = Math.round(TRANSITION_SEC * 1000);
 
 // --- State ---
 
@@ -82,6 +85,8 @@ function pickClosestTextNode(container: Node, offset: number): { textNode: Text;
 }
 
 type TextNodeEntry = { node: Text; start: number; len: number };
+type SentenceRange = { start: number; end: number };
+type Rgba = { r: number; g: number; b: number; a: number };
 
 /** Single forward TreeWalker pass — collects all text nodes with cumulative offsets. */
 function buildTextNodeMap(root: HTMLElement): TextNodeEntry[] {
@@ -140,9 +145,213 @@ function getCaretOffset(root: HTMLElement, textNodeMap?: TextNodeEntry[]): numbe
 // (arrow keys / clicks) without text changes — dim ranges are identical, skip rebuild.
 let lastDimBlockId: string | null = null;
 let lastDimText = "";
-let lastCaretSentenceRange: { start: number; end: number } | null = null;
+let lastCaretSentenceRange: SentenceRange | null = null;
 let lastHadDimRanges = false;
 let lastDimFirstNode: Text | null = null;
+let sentenceFadeFrame: number | null = null;
+let sentenceFadeToken = 0;
+
+function sentenceHighlightSupported(): boolean {
+  return "highlights" in CSS && typeof Highlight !== "undefined";
+}
+
+function rangesEqual(a: SentenceRange | null, b: SentenceRange | null): boolean {
+  return !!a && !!b && a.start === b.start && a.end === b.end;
+}
+
+function splitSentences(text: string): SentenceRange[] {
+  const matches: SentenceRange[] = [];
+  const pattern = /(?<!\d)[.?!。？！…]+(?!\d)/g;
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(text)) !== null) {
+    const end = m.index + m[0].length;
+    if (end <= lastIndex) continue;
+    matches.push({ start: lastIndex, end });
+    lastIndex = end;
+  }
+  if (lastIndex < text.length) matches.push({ start: lastIndex, end: text.length });
+  if (matches.length === 0) matches.push({ start: 0, end: text.length });
+  return matches;
+}
+
+function rangeFromOffsets(textNodeMap: TextNodeEntry[], start: number, end: number): Range | null {
+  const startLoc = resolveTextNodeAt(textNodeMap, start);
+  const endLoc = resolveTextNodeAt(textNodeMap, end);
+  if (!startLoc || !endLoc) return null;
+
+  try {
+    const range = new Range();
+    range.setStart(startLoc.node, startLoc.localOffset);
+    range.setEnd(endLoc.node, endLoc.localOffset);
+    return range;
+  } catch {
+    return null;
+  }
+}
+
+function setSentenceHighlight(name: string, ranges: Range[]): void {
+  if (ranges.length > 0) {
+    CSS.highlights.set(name, new Highlight(...ranges));
+  } else {
+    CSS.highlights.delete(name);
+  }
+}
+
+function buildDimRanges(
+  sentenceRanges: SentenceRange[],
+  textNodeMap: TextNodeEntry[],
+  excludedRanges: SentenceRange[],
+): Range[] {
+  const dimRanges: Range[] = [];
+  for (const sentenceRange of sentenceRanges) {
+    if (excludedRanges.some((excluded) => sentenceRange.start === excluded.start)) continue;
+    const range = rangeFromOffsets(textNodeMap, sentenceRange.start, sentenceRange.end);
+    if (range) dimRanges.push(range);
+  }
+  return dimRanges;
+}
+
+function resetSentenceCache(): void {
+  lastDimBlockId = null;
+  lastDimText = "";
+  lastCaretSentenceRange = null;
+  lastHadDimRanges = false;
+  lastDimFirstNode = null;
+}
+
+function cancelSentenceFade(): void {
+  sentenceFadeToken += 1;
+  if (sentenceFadeFrame !== null) {
+    cancelAnimationFrame(sentenceFadeFrame);
+    sentenceFadeFrame = null;
+  }
+  if (sentenceHighlightSupported()) {
+    CSS.highlights.delete(SENTENCE_FADE_IN_HIGHLIGHT);
+    CSS.highlights.delete(SENTENCE_FADE_OUT_HIGHLIGHT);
+  }
+}
+
+function colorToCss(color: Rgba): string {
+  return `rgba(${Math.round(color.r)},${Math.round(color.g)},${Math.round(color.b)},${Math.max(0, Math.min(1, color.a))})`;
+}
+
+function mixColor(from: Rgba, to: Rgba, t: number): Rgba {
+  return {
+    r: from.r + (to.r - from.r) * t,
+    g: from.g + (to.g - from.g) * t,
+    b: from.b + (to.b - from.b) * t,
+    a: from.a + (to.a - from.a) * t,
+  };
+}
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function parseRgbColor(value: string): Rgba | null {
+  const match = value.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/);
+  if (!match) return null;
+  return {
+    r: Number(match[1]),
+    g: Number(match[2]),
+    b: Number(match[3]),
+    a: match[4] === undefined ? 1 : Number(match[4]),
+  };
+}
+
+function getThemeDimColor(): Rgba {
+  const themeMode = document.documentElement.getAttribute("data-theme-mode");
+  const value = themeMode === "dark" ? 255 : 0;
+  return { r: value, g: value, b: value, a: SENTENCE_DIM_ALPHA };
+}
+
+function getBlockTextColor(block: HTMLElement): Rgba {
+  const parsed = parseRgbColor(getComputedStyle(block).color);
+  if (parsed) return parsed;
+  const fallback = document.documentElement.getAttribute("data-theme-mode") === "dark" ? 255 : 0;
+  return { r: fallback, g: fallback, b: fallback, a: 1 };
+}
+
+function startSentenceFade(
+  block: HTMLElement,
+  textNodeMap: TextNodeEntry[],
+  sentenceRanges: SentenceRange[],
+  oldCaretRange: SentenceRange,
+  newCaretRange: SentenceRange,
+): boolean {
+  cancelSentenceFade();
+
+  if (SENTENCE_FADE_MS <= 0) return false;
+
+  const fadeOutSource = sentenceRanges.find((range) => range.start === oldCaretRange.start) ?? oldCaretRange;
+  const fadeInSource = sentenceRanges.find((range) => range.start === newCaretRange.start) ?? newCaretRange;
+  const fadeOutRange = rangeFromOffsets(textNodeMap, fadeOutSource.start, fadeOutSource.end);
+  const fadeInRange = rangeFromOffsets(textNodeMap, fadeInSource.start, fadeInSource.end);
+  if (!fadeOutRange || !fadeInRange) return false;
+
+  const token = sentenceFadeToken;
+  const startTime = performance.now();
+  const firstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
+  const blockId = block.dataset?.nodeId ?? null;
+  const text = block.textContent ?? "";
+  const textColor = getBlockTextColor(block);
+  const dimColor = getThemeDimColor();
+  document.documentElement.style.setProperty("--zt-sentence-fade-out-color", colorToCss(textColor));
+  document.documentElement.style.setProperty("--zt-sentence-fade-in-color", colorToCss(dimColor));
+
+  setSentenceHighlight(SENTENCE_FADE_OUT_HIGHLIGHT, [fadeOutRange]);
+  setSentenceHighlight(SENTENCE_FADE_IN_HIGHLIGHT, [fadeInRange]);
+
+  const finish = () => {
+    if (token !== sentenceFadeToken) return;
+    sentenceFadeFrame = null;
+    CSS.highlights.delete(SENTENCE_FADE_OUT_HIGHLIGHT);
+    CSS.highlights.delete(SENTENCE_FADE_IN_HIGHLIGHT);
+
+    if (
+      active &&
+      block.isConnected &&
+      firstNode !== null &&
+      block.contains(firstNode) &&
+      blockId === lastDimBlockId &&
+      text === lastDimText &&
+      rangesEqual(lastCaretSentenceRange, newCaretRange)
+    ) {
+      const finalDimRanges = buildDimRanges(sentenceRanges, textNodeMap, [newCaretRange]);
+      setSentenceHighlight(
+        SENTENCE_DIM_HIGHLIGHT,
+        finalDimRanges,
+      );
+      lastHadDimRanges = finalDimRanges.length > 0;
+    }
+  };
+
+  const step = (now: number) => {
+    if (token !== sentenceFadeToken) return;
+
+    const raw = Math.min(1, (now - startTime) / SENTENCE_FADE_MS);
+    const t = easeInOutCubic(raw);
+    document.documentElement.style.setProperty(
+      "--zt-sentence-fade-out-color",
+      colorToCss(mixColor(textColor, dimColor, t)),
+    );
+    document.documentElement.style.setProperty(
+      "--zt-sentence-fade-in-color",
+      colorToCss(mixColor(dimColor, textColor, t)),
+    );
+
+    if (raw < 1) {
+      sentenceFadeFrame = requestAnimationFrame(step);
+      return;
+    }
+
+    finish();
+  };
+
+  sentenceFadeFrame = requestAnimationFrame(step);
+  return true;
+}
 
 /**
  * Apply sentence-level dimming via CSS Custom Highlight API.
@@ -150,13 +359,13 @@ let lastDimFirstNode: Text | null = null;
  * them in CSS.highlights. SiYuan's input/transaction handlers are unaffected.
  */
 function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNodeMap: TextNodeEntry[]): void {
-  if (!("highlights" in CSS)) return; // CSS Custom Highlight API not supported
+  if (!sentenceHighlightSupported()) return; // CSS Custom Highlight API not supported
 
   const text = block.textContent ?? "";
   if (!text) {
+    cancelSentenceFade();
     CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
-    lastHadDimRanges = false;
-    lastDimFirstNode = null;
+    resetSentenceCache();
     return;
   }
 
@@ -181,42 +390,40 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
 
   // Split by sentence-ending punctuation (含中文省略号 …)。
   // 跳过数字间的英文句点（小数点 3.14 不分割）：lookbehind/lookahead 排除 \d.\d。
-  const matches: Array<{ start: number; end: number }> = [];
-  const pattern = /(?<!\d)[.?!。？！…]+(?!\d)/g;
-  let lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = pattern.exec(text)) !== null) {
-    const end = m.index + m[0].length;
-    if (end <= lastIndex) continue;
-    matches.push({ start: lastIndex, end });
-    lastIndex = end;
-  }
-  if (lastIndex < text.length) matches.push({ start: lastIndex, end: text.length });
-  if (matches.length === 0) matches.push({ start: 0, end: text.length });
+  const matches = splitSentences(text);
 
   // Build Ranges for all sentences EXCEPT the current one (the one containing the caret)
-  let caretRange: { start: number; end: number } | null = null;
-  const dimRanges: Range[] = [];
+  let caretRange: SentenceRange | null = null;
   for (const { start, end } of matches) {
     if (caretOffset >= start && caretOffset <= end) {
       caretRange = { start, end };
-      continue;
+      break;
     }
-
-    const startLoc = resolveTextNodeAt(textNodeMap, start);
-    const endLoc = resolveTextNodeAt(textNodeMap, end);
-    if (!startLoc || !endLoc) continue;
-
-    try {
-      const range = new Range();
-      range.setStart(startLoc.node, startLoc.localOffset);
-      range.setEnd(endLoc.node, endLoc.localOffset);
-      dimRanges.push(range);
-    } catch { /* skip invalid range */ }
   }
 
+  const previousCaretRange = lastCaretSentenceRange;
+  const canAnimate =
+    SENTENCE_FADE_MS > 0 &&
+    blockId !== null &&
+    blockId === lastDimBlockId &&
+    previousCaretRange !== null &&
+    caretRange !== null &&
+    previousCaretRange.start !== caretRange.start &&
+    lastDimFirstNode !== null &&
+    block.contains(lastDimFirstNode);
+
+  const dimRanges = buildDimRanges(
+    matches,
+    textNodeMap,
+    canAnimate && previousCaretRange && caretRange
+      ? [previousCaretRange, caretRange]
+      : caretRange
+        ? [caretRange]
+        : [],
+  );
+
   if (dimRanges.length > 0) {
-    CSS.highlights.set(SENTENCE_DIM_HIGHLIGHT, new Highlight(...dimRanges));
+    setSentenceHighlight(SENTENCE_DIM_HIGHLIGHT, dimRanges);
   } else {
     CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
   }
@@ -227,6 +434,17 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
   lastCaretSentenceRange = caretRange;
   lastHadDimRanges = dimRanges.length > 0;
   lastDimFirstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
+
+  if (canAnimate && previousCaretRange && caretRange) {
+    const started = startSentenceFade(block, textNodeMap, matches, previousCaretRange, caretRange);
+    if (!started) {
+      const fallbackRanges = buildDimRanges(matches, textNodeMap, [caretRange]);
+      setSentenceHighlight(SENTENCE_DIM_HIGHLIGHT, fallbackRanges);
+      lastHadDimRanges = fallbackRanges.length > 0;
+    }
+  } else {
+    cancelSentenceFade();
+  }
 }
 
 // --- Block-level opacity ---
@@ -277,7 +495,9 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
     const distance = Math.abs(fromIndex - i);
     const baseLevel = BLOCK_LEVELS[Math.min(distance, BLOCK_LEVELS.length - 1)];
     // P1-1: distance≥2 的远块 weight 差异不可感知，跳过 getBoundingClientRect。
-    const weightFactor = distance >= 2
+    const weightFactor = distance === 0
+      ? 1.0
+      : distance >= 2
       ? 1.0
       : WEIGHT_MIN + visualWeightOf(block, editorRect) * (1 - WEIGHT_MIN);
     block.style.transition = `opacity ${TRANSITION_SEC}s ease`;
@@ -332,8 +552,10 @@ function applyRipple(): void {
     const caretOffset = getCaretOffset(currentBlock, textNodeMap);
     if (caretOffset !== null) {
       applySentenceHighlight(currentBlock, caretOffset, textNodeMap);
-    } else if ("highlights" in CSS) {
+    } else if (sentenceHighlightSupported()) {
+      cancelSentenceFade();
       CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+      resetSentenceCache();
     }
   });
 }
@@ -349,8 +571,12 @@ function clearAll(): void {
     const htmlEl = el as HTMLElement;
     if (htmlEl.style.opacity) htmlEl.style.opacity = "";
   });
-  if ("highlights" in CSS) CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+  cancelSentenceFade();
+  if (sentenceHighlightSupported()) CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
   document.documentElement.style.removeProperty("--zt-sentence-dim-color");
+  document.documentElement.style.removeProperty("--zt-sentence-fade-in-color");
+  document.documentElement.style.removeProperty("--zt-sentence-fade-out-color");
+  resetSentenceCache();
   // 重置缓存：视觉状态已清，下次 apply 必须重建。
   lastBlockOpacityBlockId = null;
   lastBlockOpacityContainerTop = null;
