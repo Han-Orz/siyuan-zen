@@ -1,36 +1,74 @@
-### 思源集市没有更新 → 改名 zenType（方案 B，执行中）
-- **根因**：bazaar stage/plugins.json 冻结 siyuan-zen 在 v1.0.6（name="ZenType"），v2.0.0 起 plugin.json name 改为 "siyuan-zen" 触发 stage 校验冲突，stage 静默保留旧数据，集市从未更新。
-- **方案**：统一改名 zenType（repo + plugin.json name + plugins.txt path），两步 PR 重新上架。
-- **进度**：
-  - [x] 调研根因 + bazaar 校验/清理机制
-  - [x] PR #1 删旧 path：plugins.txt 移除 Han-Orz/siyuan-zen → siyuan-note/bazaar#1894（等合并）
-  - [x] 本仓库改名（plugin.json name/url/version→zenType, zh_CN→zh-CN, make_dev_link.js, README）
-  - [ ] GitHub repo 改名 siyuan-zen → zenType + 发 v2.6.1 release（package.zip 标 Latest）
-  - [ ] PR #2 加新 path：plugins.txt 加 Han-Orz/zenType → 等 stage 收录
+﻿## 当前
 
-### 更新撰写一份详尽的项目设计文档
-目的是为了让我这样的编辑小白也能理清楚插件是怎么工作的,有问题的时候能快速定位.
-主要说明 + 三个模块如何工作.
+### 🟡 等集市 PR 合并 + 发 v2.6.1 release（待外部动作，预计一周内）
+- **背景**：bazaar stage/plugins.json 冻结 `siyuan-zen` 在 v1.0.6（name="ZenType"），v2.0.0 起 plugin.json name 改为 `siyuan-zen` 触发 stage 校验冲突，stage 静默保留旧数据，集市从未更新。
+- **方案**：统一改名 `zenType`（repo + plugin.json name + plugins.txt path），两步 PR 重新上架。
+- **进度**：
+  - [x] 调研根因 + bazaar 校验 / 清理机制
+  - [x] PR #1 删旧 path：plugins.txt 移除 `Han-Orz/siyuan-zen`（siyuan-note/bazaar#1894，等合并）
+  - [x] 本仓库改名（plugin.json name/url/version→`zenType`, `zh_CN`→`zh-CN`, `make_dev_link.js`, README）
+  - [x] GitHub repo 改名 `siyuan-zen` → `zenType`
+  - [ ] 发 v2.6.1 release（`zentype.zip` 标 Latest，release notes 引用 CHANGELOG）
+  - [ ] PR #2 加新 path：plugins.txt 加 `Han-Orz/zenType`，等 stage 收录
+  - [ ] 集市真正上线后，README 顶部"Upgrading"段可改为"已稳定，可直接装"
+- **本仓库侧**所有代码 / 文档改动已就绪（v2.6.1 commit `931512d`），后续只等外部 PR 合并。
+
+### 🟢 文档清洁 + 发布前同步（v2.6.1 收尾）
+- [x] 统一本次触及文件为 UTF-8 + LF 行尾，并新增 `.gitattributes` 固定 LF
+- README / README_zh-CN 同步 v2.6.1 行为：
+  - 首次输入自动 ON（cursor 始终 ON，typewriter + ripple 默认 OFF）
+  - 新增 `CLICK_CENTER_LOW` / `CLICK_CENTER_HIGH` / `TYPING_GAP_MS` / `COMFORT_ZONE` / `SCROLL_DURATION_TIERS` / `SCROLL_CURVE` / `SENTENCE_DIM_ALPHA` / `TRANSITION_SEC` / `WEIGHT_MIN` / `MIN_SCALE` / `EDGE_ARROW.ENABLED` 等配置项
+  - "Edge Cases" 补 IME 防护 + Enter/Backspace 居中区分
+- [x] `.gitignore` 加 `.claude/`（本地 Claude Code 配置不入库）
+
+### 🟢 BUG 修复（v2.6.1 收尾）
+
+#### BUG #1：ripple 句级高亮在 SiYuan block 重渲染后失效
+- **状态**：本地已修复；基础 Markdown 解析路径已观察正常，`#标签` 路径已追加当前块 DOM mutation 兜底，待最终思源实测确认。
+- **复现路径**：敲 `**` + 字符 + 空格，或输入 `#标签` 触发 SiYuan inline tokenizer 重渲染当前 block。
+- **根因结论**：
+  - 原短路条件只看 `text === lastDimText` + 首个旧 text node 仍在 block 内。
+  - 调试日志显示 SiYuan 可出现 `sameText=true`、首 text node 未变、但后续 text node 已替换的情况；CSS Highlight Range 仍引用旧节点时会失效。
+  - 仅检查 `textNodeMap[0].node` / `isConnected` 不够，因为重渲染不一定替换首节点。
+  - 早期把 `textNodesUnchanged` 放进 `canAnimate` 会导致持续输入第二句时旧当前句不走动画；该错误路径已清理。
+- **当前修复**：
+  - 缓存完整 text node snapshot（node 引用 + len），只在 snapshot 未变时允许同句短路。
+  - `canAnimate` 改为基于上一句 range 是否仍存在，不再依赖 DOM 节点完全不变，避免第二句动画回归。
+  - `input` 时立即刷新一次，并保留 rAF 刷新，减少 tokenizer 重渲染后的空窗。
+  - 新增只监听 `childList` / `characterData` 的当前块 mutation 兜底，覆盖 `#标签` 这类 input/selectionchange 之后的二次重渲染。
+- **性能判断**：当前块级别开销，mutation 回调有 focusActive + 当前块过滤，不监听 attributes，不会被本模块写 opacity/transition 自触发；可接受。
+
+#### BUG #2：cursor transition 每帧重写字符串的微优化
+- **状态**：已实施低风险版 `lastCursorDur`；未改 CSS 变量方案。
+- **判断**：CSS 变量方案理论上更干净，但实际收益很小，还会引入样式契约和首次变量写入时机问题；本次只缓存 `dur`，距离档位不变时跳过 `style.transition` 字符串重写。
+- **当前修复**：
+  - `lastCursorDur` 记录上次 transition duration。
+  - 仅当 `dur !== lastCursorDur` 时重写 `cursorEl.style.transition`。
+  - `cursorEl.style.opacity = ""` 也加空值判断，避免每帧重复删除 inline opacity。
+  - `destroyCursor()` 重置 `lastCursorDur`。
+- **性能判断**：这是微优化，主要减少无意义 style 字符串解析和属性写入；体感差异预计很小，但风险低。
 
 ---
 
 ## 已完成
 
+### ✅ 撰写详尽的项目设计文档
+- `docs/DESIGN.md`（1006 行）覆盖：模块依赖图、状态机、关键算法（FLIP / Highlight / 边界检测）、配置项、决策记录、已知限制
+- 面向"编辑小白也能定位问题"的目标，按模块 + 决策时间线组织
+
 ### ✅ 聚焦模式句级 dim 切换动画（v2.6.1）
 - 验证结论：不改 `Range + CSS Custom Highlight API` 架构也能做句级动画；多 highlight 名称承载稳定 dim、fade-in、fade-out 三层
 - 实现：旧当前句 `zt-sentence-fade-out` 从原文字色插值到 dim 色；新当前句 `zt-sentence-fade-in` 从 dim 色插值到原文字色；`requestAnimationFrame + easeInOutCubic` 驱动颜色插值
-- POC：`参考/highlight-animation-poc.html`
 - 当前句稳定态偏淡根因：当前块原先会乘 `visualWeightOf`，当块在视窗边缘时整体 opacity 小于 1；已改为 `distance === 0` 强制 `1.0`
-- 文档：`docs/DESIGN.md` 已更新 v2.6.1 设计、配置和决策记录
 
-### ✅ 聚焦模式嵌套列表透明度叠加 bug（v2.6.1, commit f121839)
+### ✅ 聚焦模式嵌套列表透明度叠加 bug（v2.6.1, commit f121839）
 - 嵌套列表出现透明度×透明度叠加（父块 opacity × 子块 opacity → 几乎不可见）
 - 退出聚焦模式（wheel/arrow/click）和关闭插件（destroyRipple）均无法恢复透明度
 - 根因：v2.6.0 的 `isConnected` 检查 + P0-3 缓存导致清理不可靠，断开/脱离追踪的块残留 opacity
-- 修复：移除三处 `isConnected` 检查；`clearAll`/`destroyRipple` 加 `querySelectorAll` 兜底清理；清 `--zt-sentence-dim-color` CSS 变量
+- 修复：移除三处 `isConnected` 检查；`clearAll` / `destroyRipple` 加 `querySelectorAll` 兜底清理；清 `--zt-sentence-dim-color` CSS 变量
 
-### ✅ 打字机模式的滚动问题（v2.6.1, commit f121839)
+### ✅ 打字机模式的滚动问题（v2.6.1, commit f121839）
 - 首字不滚动：vertical-jump defer 内部清 `lastCheckRect=null` + keydown 加 `setBothOn` 修复
-- 连续键入不滚动/空隙滚动：input 监听维护 `lastInputAt`，debounce gate（`TYPING_GAP_MS=400`），首字 `firstCharAfterIdle` 立即滚
-- 滚动拖 IME 候选窗一卡一卡：`compositionstart`/`compositionend` 监听 + `composing` 门禁，compositionstart 取消 in-flight smoothScroll
-- Enter/Backspace 立即滚至中心；click 居中（Option B [0.25,0.75]，缓起缓收 +加长40%）
+- 连续键入不滚动 / 空隙滚动：input 监听维护 `lastInputAt`，debounce gate（`TYPING_GAP_MS=400`），首字 `firstCharAfterIdle` 立即滚
+- 滚动拖 IME 候选窗一卡一卡：`compositionstart` / `compositionend` 监听 + `composing` 门禁，compositionstart 取消 in-flight smoothScroll
+- Enter / Backspace 立即滚至中心；click 居中（Option B `[0.25, 0.75]`，缓起缓收 + 加长 40%）

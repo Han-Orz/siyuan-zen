@@ -11,7 +11,7 @@
  *   - 块级粒度：JS 直接 style.opacity
  *   - 默认 OFF，输入后 ON（inputMode.setBothOn 触发）
  *   - 暂停：选中 / 悬浮窗 -> 清除所有 opacity 覆盖 + Highlight
- *   - 单事件驱动：selectionchange + inputMode 订阅
+ *   - 事件驱动：selectionchange/input + 当前块 DOM mutation + inputMode 订阅
  *
  * v2.5.0 变更：废弃 span 包裹（extractContents + insertNode），改用 CSS Custom Highlight API。
  *   原因：span 包裹分裂文本节点，SiYuan 的 input/transaction 处理器在突变后重新查选区时
@@ -41,6 +41,8 @@ let eventListeners: Array<[string, EventListener]> = [];
 const modifiedBlocks = new Set<HTMLElement>();
 let unsubInputMode: (() => void) | null = null;
 let visualStateDirty = false;
+let mutationObserver: MutationObserver | null = null;
+let mutationRefreshQueued = false;
 
 // P0-3: 块级 opacity 缓存——同一顶层块 + 无滚动 + 无块增删时跳过整个 applyBlockOpacity。
 // containerTop（rect.top）捕获祖先滚动；scrollTop 捕获 container 自身滚动。
@@ -87,6 +89,7 @@ function pickClosestTextNode(container: Node, offset: number): { textNode: Text;
 }
 
 type TextNodeEntry = { node: Text; start: number; len: number };
+type TextNodeSnapshotEntry = { node: Text; len: number };
 type SentenceRange = { start: number; end: number };
 type Rgba = { r: number; g: number; b: number; a: number };
 
@@ -102,6 +105,23 @@ function buildTextNodeMap(root: HTMLElement): TextNodeEntry[] {
     consumed += len;
   }
   return map;
+}
+
+function snapshotTextNodeMap(map: TextNodeEntry[]): TextNodeSnapshotEntry[] {
+  return map.map(({ node, len }) => ({ node, len }));
+}
+
+function textNodeMapMatchesSnapshot(
+  map: TextNodeEntry[],
+  snapshot: TextNodeSnapshotEntry[] | null,
+): boolean {
+  if (!snapshot || map.length !== snapshot.length) return false;
+  for (let i = 0; i < map.length; i++) {
+    const entry = map[i];
+    const cached = snapshot[i];
+    if (entry.node !== cached.node || entry.len !== cached.len) return false;
+  }
+  return true;
 }
 
 /** Resolve a global char offset to a Text node + local offset via binary search on the map. */
@@ -149,7 +169,7 @@ let lastDimBlockId: string | null = null;
 let lastDimText = "";
 let lastCaretSentenceRange: SentenceRange | null = null;
 let lastHadDimRanges = false;
-let lastDimFirstNode: Text | null = null;
+let lastDimTextNodes: TextNodeSnapshotEntry[] | null = null;
 let sentenceFadeFrame: number | null = null;
 let sentenceFadeToken = 0;
 let activeSentenceFade: {
@@ -226,7 +246,7 @@ function resetSentenceCache(): void {
   lastDimText = "";
   lastCaretSentenceRange = null;
   lastHadDimRanges = false;
-  lastDimFirstNode = null;
+  lastDimTextNodes = null;
 }
 
 function cancelSentenceFade(): void {
@@ -319,7 +339,7 @@ function applyStableSentenceHighlight(block: HTMLElement): void {
   lastDimText = text;
   lastCaretSentenceRange = caretRange;
   lastHadDimRanges = dimRanges.length > 0;
-  lastDimFirstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
+  lastDimTextNodes = snapshotTextNodeMap(textNodeMap);
 }
 
 function refreshSentenceFadeRanges(
@@ -358,7 +378,6 @@ function startSentenceFade(
 
   const token = sentenceFadeToken;
   const startTime = performance.now();
-  const firstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
   const blockId = block.dataset?.nodeId ?? null;
   const text = block.textContent ?? "";
   const textColor = getBlockTextColor(block);
@@ -439,17 +458,17 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
   }
 
   const blockId = block.dataset?.nodeId ?? null;
+  const textNodesUnchanged = textNodeMapMatchesSnapshot(textNodeMap, lastDimTextNodes);
 
   // Short-circuit: cursor moved within the same sentence of the same block (no text change).
-  // has() catches external Highlight clears (clearAll / destroyRipple); contains() catches
-  // DOM restructuring with identical textContent (SiYuan block re-render).
+  // has() catches external Highlight clears (clearAll / destroyRipple); the text node snapshot
+  // catches SiYuan block re-renders that keep textContent unchanged but replace later Text nodes.
   if (
     blockId !== null &&
     blockId === lastDimBlockId &&
     text === lastDimText &&
     lastCaretSentenceRange !== null &&
-    lastDimFirstNode !== null &&
-    block.contains(lastDimFirstNode) &&
+    textNodesUnchanged &&
     caretOffset >= lastCaretSentenceRange.start &&
     caretOffset <= lastCaretSentenceRange.end &&
     (!lastHadDimRanges || CSS.highlights.has(SENTENCE_DIM_HIGHLIGHT))
@@ -498,8 +517,7 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
     previousCaretRange !== null &&
     caretRange !== null &&
     previousCaretRange.start !== caretRange.start &&
-    lastDimFirstNode !== null &&
-    block.contains(lastDimFirstNode);
+    matches.some((range) => range.start === previousCaretRange.start);
 
   let excludedRanges: SentenceRange[] = [];
   if (continuingFade && activeSentenceFade !== null && caretRange !== null) {
@@ -523,7 +541,7 @@ function applySentenceHighlight(block: HTMLElement, caretOffset: number, textNod
   lastDimText = text;
   lastCaretSentenceRange = caretRange;
   lastHadDimRanges = dimRanges.length > 0;
-  lastDimFirstNode = textNodeMap.length > 0 ? textNodeMap[0].node : null;
+  lastDimTextNodes = snapshotTextNodeMap(textNodeMap);
 
   if (canAnimate && previousCaretRange && caretRange) {
     const started = startSentenceFade(block, textNodeMap, matches, previousCaretRange, caretRange);
@@ -609,47 +627,82 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
 
 // --- Main apply ---
 
+function applyRippleNow(): void {
+  if (!inputMode.isFocusActive() || shouldPauseFocusAndTypewriter()) {
+    clearAll();
+    return;
+  }
+
+  const currentBlock = getCurrentBlock();
+  if (!currentBlock) return;
+
+  const container = currentBlock.closest(".protyle-wysiwyg") as HTMLElement | null;
+  if (!container) return;
+
+  // 句级 dim color：仅在 OFF→ON 或主题切换时设 CSS 变量（避免每帧重写）。
+  const themeMode = document.documentElement.getAttribute("data-theme-mode");
+  if (!rippleColorActive || themeMode !== lastThemeMode) {
+    const dimRgb = themeMode === "dark" ? "255,255,255" : "0,0,0";
+    document.documentElement.style.setProperty(
+      "--zt-sentence-dim-color",
+      `rgba(${dimRgb},${SENTENCE_DIM_ALPHA})`,
+    );
+    visualStateDirty = true;
+    rippleColorActive = true;
+    lastThemeMode = themeMode;
+  }
+
+  applyBlockOpacity(container, currentBlock);
+
+  const textNodeMap = buildTextNodeMap(currentBlock);
+  const caretOffset = getCaretOffset(currentBlock, textNodeMap);
+  if (caretOffset !== null) {
+    applySentenceHighlight(currentBlock, caretOffset, textNodeMap);
+  } else if (sentenceHighlightSupported()) {
+    cancelSentenceFade();
+    CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
+    resetSentenceCache();
+  }
+}
+
 function applyRipple(): void {
   if (pendingFrame !== null) return;
   pendingFrame = requestAnimationFrame(() => {
     pendingFrame = null;
-
-    if (!inputMode.isFocusActive() || shouldPauseFocusAndTypewriter()) {
-      clearAll();
-      return;
-    }
-
-    const currentBlock = getCurrentBlock();
-    if (!currentBlock) return;
-
-    const container = currentBlock.closest(".protyle-wysiwyg") as HTMLElement | null;
-    if (!container) return;
-
-    // 句级 dim color：仅在 OFF→ON 或主题切换时设 CSS 变量（避免每帧重写）。
-    const themeMode = document.documentElement.getAttribute("data-theme-mode");
-    if (!rippleColorActive || themeMode !== lastThemeMode) {
-      const dimRgb = themeMode === "dark" ? "255,255,255" : "0,0,0";
-      document.documentElement.style.setProperty(
-        "--zt-sentence-dim-color",
-        `rgba(${dimRgb},${SENTENCE_DIM_ALPHA})`,
-      );
-      visualStateDirty = true;
-      rippleColorActive = true;
-      lastThemeMode = themeMode;
-    }
-
-    applyBlockOpacity(container, currentBlock);
-
-    const textNodeMap = buildTextNodeMap(currentBlock);
-    const caretOffset = getCaretOffset(currentBlock, textNodeMap);
-    if (caretOffset !== null) {
-      applySentenceHighlight(currentBlock, caretOffset, textNodeMap);
-    } else if (sentenceHighlightSupported()) {
-      cancelSentenceFade();
-      CSS.highlights.delete(SENTENCE_DIM_HIGHLIGHT);
-      resetSentenceCache();
-    }
+    applyRippleNow();
   });
+}
+
+function mutationTouchesCurrentBlock(record: MutationRecord, currentBlock: HTMLElement): boolean {
+  if (currentBlock.contains(record.target)) return true;
+
+  for (const node of Array.from(record.addedNodes)) {
+    if (node === currentBlock || currentBlock.contains(node)) return true;
+    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).contains(currentBlock)) return true;
+  }
+
+  return false;
+}
+
+function scheduleMutationRefresh(): void {
+  if (mutationRefreshQueued) return;
+  mutationRefreshQueued = true;
+  queueMicrotask(() => {
+    mutationRefreshQueued = false;
+    if (!active) return;
+    applyRippleNow();
+  });
+}
+
+// SiYuan inline tokenizers can re-render the current block after input/selectionchange.
+function onDomMutation(records: MutationRecord[]): void {
+  if (!active || !inputMode.isFocusActive() || shouldPauseFocusAndTypewriter()) return;
+
+  const currentBlock = getCurrentBlock();
+  if (!currentBlock) return;
+  if (!records.some((record) => mutationTouchesCurrentBlock(record, currentBlock))) return;
+
+  scheduleMutationRefresh();
 }
 
 function clearAll(options: { deepScan?: boolean; clearTransition?: boolean } = {}): void {
@@ -692,6 +745,15 @@ function onSelectionChange(): void {
   applyRipple();
 }
 
+function onInput(): void {
+  if (pendingFrame !== null) {
+    cancelAnimationFrame(pendingFrame);
+    pendingFrame = null;
+  }
+  applyRippleNow();
+  applyRipple();
+}
+
 export function initRipple(): void {
   if (initialized) return;
   initialized = true;
@@ -700,7 +762,19 @@ export function initRipple(): void {
 
   const handler: EventListener = onSelectionChange;
   document.addEventListener("selectionchange", handler);
-  eventListeners = [["selectionchange", handler]];
+  const inputHandler: EventListener = onInput;
+  document.addEventListener("input", inputHandler);
+  eventListeners = [
+    ["selectionchange", handler],
+    ["input", inputHandler],
+  ];
+
+  mutationObserver = new MutationObserver(onDomMutation);
+  mutationObserver.observe(document.body, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
 
   // P1-1: 订阅 inputMode。wheel/touchmove/blur/click 等退出事件不触发 selectionchange，
   // 旧版仅靠 selectionchange → clearAll 会让 ripple opacity 在滚动/失焦后残留。
@@ -723,6 +797,12 @@ export function destroyRipple(): void {
     unsubInputMode();
     unsubInputMode = null;
   }
+
+  if (mutationObserver) {
+    mutationObserver.disconnect();
+    mutationObserver = null;
+  }
+  mutationRefreshQueued = false;
 
   if (pendingFrame !== null) {
     cancelAnimationFrame(pendingFrame);

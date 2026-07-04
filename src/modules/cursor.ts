@@ -51,6 +51,7 @@ let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
 let prevCursorX: number | null = null; // Q7：上一次写入 transform 时的 x，用于计算本帧移动距离 → 时长
 let prevCursorY: number | null = null; // Q7：上一次写入 transform 时的 y，同上
+let lastCursorDur: number | null = null;
 let wasOffScreen = false; // Q-return：上一帧是否在 case B（编辑器内离屏），用于在 case C 入口强制恢复 transition 让淡入可见
 let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 3（箭头，已禁用）复用
 let arrowEl: HTMLDivElement | null = null; // commit 3：视口边缘箭头 DOM 引用
@@ -359,8 +360,11 @@ function doUpdateCursor(): void {
     // Q7：长距离 = 长时长。查表 TRANSITION.TIERS（config.ts），用户可自行调整。
     const dist = prevCursorX !== null && prevCursorY !== null ? Math.hypot(rect.x - prevCursorX, rect.y - prevCursorY) : 0;
     const dur = transitionDurationForDistance(dist);
-    cursorEl.style.transition = `transform ${dur}s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out`;
-    cursorEl.style.opacity = "";
+    if (dur !== lastCursorDur) {
+      cursorEl.style.transition = `transform ${dur}s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out`;
+      lastCursorDur = dur;
+    }
+    if (cursorEl.style.opacity !== "") cursorEl.style.opacity = "";
     cursorEl.style.transform = `translate3d(${rect.x}px, ${rect.y - yOffset}px, 0)`;
     cursorEl.style.height = `${rect.height}px`;
     prevCursorX = rect.x;
@@ -747,6 +751,7 @@ export function destroyCursor(): void {
   cachedEffectiveZIndex = 0;
   prevCursorX = null; // Q7：重置距离记录，下次启动从头计算
   prevCursorY = null;
+  lastCursorDur = null;
   wasOffScreen = false; // Q-return：重置"上一帧离屏"标记
 
   // commit 3：移除箭头 DOM 元素 + 重置可见状态
