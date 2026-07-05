@@ -1,6 +1,6 @@
 ﻿## 当前
 
-### 🟡 等集市 PR 合并 + 发 v2.6.1 release（待外部动作，预计一周内）
+### 🟡 等集市 PR 合并 + 发 v2.6.2 release（待外部动作，预计一周内）
 - **背景**：bazaar stage/plugins.json 冻结 `siyuan-zen` 在 v1.0.6（name="ZenType"），v2.0.0 起 plugin.json name 改为 `siyuan-zen` 触发 stage 校验冲突，stage 静默保留旧数据，集市从未更新。
 - **方案**：统一改名 `zenType`（repo + plugin.json name + plugins.txt path），两步 PR 重新上架。
 - **进度**：
@@ -8,7 +8,7 @@
   - [x] PR #1 删旧 path：plugins.txt 移除 `Han-Orz/siyuan-zen`（siyuan-note/bazaar#1894，等合并）
   - [x] 本仓库改名（plugin.json name/url/version→`zenType`, `zh_CN`→`zh-CN`, `make_dev_link.js`, README）
   - [x] GitHub repo 改名 `siyuan-zen` → `zenType`
-  - [ ] 发 v2.6.1 release（`zentype.zip` 标 Latest，release notes 引用 CHANGELOG）
+  - [ ] 发 v2.6.2 release（`zentype.zip` 标 Latest，release notes 引用 CHANGELOG）
   - [ ] PR #2 加新 path：plugins.txt 加 `Han-Orz/zenType`，等 stage 收录
   - [ ] 集市真正上线后，README 顶部"Upgrading"段可改为"已稳定，可直接装"
 - **本仓库侧**所有代码 / 文档改动已就绪（v2.6.1 commit `931512d`），后续只等外部 PR 合并。
@@ -51,6 +51,64 @@
 ---
 
 ## 已完成
+
+### ✅ 性能热点收敛（v2.6.2）
+- **Typewriter FLIP**：Enter / Backspace 块位移动画不再扫描整个编辑器；改为围绕当前选区起止块采样前后 sibling 窗口，并沿祖先层级采样，降低长文档下的 `getBoundingClientRect()` 数量。
+- **Ripple MutationObserver**：不再监听整个 `document.body`；focus active 时监听当前顶层块 subtree，并监听父容器一层 `childList` 捕获整块替换，刷新复用 rAF 队列。
+
+### ✅ 顶栏银河图标位置微调
+- **状态**：已完成；用户已通过 SVG 属性平移把图标移动到正确位置。
+- **结论**：SVG 内部 `translate(x y)` 使用 `viewBox` 用户单位，不是屏幕像素。银河图标 `viewBox="0 0 1024 1024"`、渲染尺寸 24px 时，`translate(2 -2)` 只有约 0.047px，肉眼不可见。
+- **实测经验**：需要按 `viewBox` 与渲染尺寸换算；例如 24px 尺寸下，`128` 个 viewBox 单位约等于 3px。
+
+### ✅ 文档清洁 + 发布前同步（v2.6.1）
+- 统一本次触及文件为 UTF-8 + LF 行尾，并新增 `.gitattributes` 固定 LF
+- README / README_zh-CN 同步 v2.6.1 行为：
+  - 首次输入自动 ON（cursor 始终 ON，typewriter + ripple 默认 OFF）
+  - 新增 `CLICK_CENTER_LOW` / `CLICK_CENTER_HIGH` / `TYPING_GAP_MS` / `COMFORT_ZONE` / `SCROLL_DURATION_TIERS` / `SCROLL_CURVE` / `SENTENCE_DIM_ALPHA` / `TRANSITION_SEC` / `WEIGHT_MIN` / `MIN_SCALE` / `EDGE_ARROW.ENABLED` 等配置项
+  - "Edge Cases" 补 IME 防护 + Enter/Backspace 居中区分
+- `.gitignore` 加 `.claude/`（本地 Claude Code 配置不入库）
+
+### ✅ ripple 句级高亮在 SiYuan block 重渲染后失效（v2.6.1）
+- **状态**：已修复；基础 Markdown 解析路径已观察正常，`#标签` 路径已追加当前块 DOM mutation 兜底。
+- **复现路径**：敲 `**` + 字符 + 空格，或输入 `#标签` 触发 SiYuan inline tokenizer 重渲染当前 block。
+- **根因结论**：
+  - 原短路条件只看 `text === lastDimText` + 首个旧 text node 仍在 block 内。
+  - 调试日志显示 SiYuan 可出现 `sameText=true`、首 text node 未变、但后续 text node 已替换的情况；CSS Highlight Range 仍引用旧节点时会失效。
+  - 仅检查 `textNodeMap[0].node` / `isConnected` 不够，因为重渲染不一定替换首节点。
+  - 早期把 `textNodesUnchanged` 放进 `canAnimate` 会导致持续输入第二句时旧当前句不走动画；该错误路径已清理。
+- **修复**：
+  - 缓存完整 text node snapshot（node 引用 + len），只在 snapshot 未变时允许同句短路。
+  - `canAnimate` 改为基于上一句 range 是否仍存在，不再依赖 DOM 节点完全不变，避免第二句动画回归。
+  - `input` 时立即刷新一次，并保留 rAF 刷新，减少 tokenizer 重渲染后的空窗。
+  - 新增只监听 `childList` / `characterData` 的当前块 mutation 兜底，覆盖 `#标签` 这类 input/selectionchange 之后的二次重渲染。
+
+### ✅ cursor transition 每帧重写字符串的微优化（v2.6.1）
+- **状态**：已实施低风险版 `lastCursorDur`；未改 CSS 变量方案。
+- **判断**：CSS 变量方案理论上更干净，但实际收益很小，还会引入样式契约和首次变量写入时机问题；本次只缓存 `dur`，距离档位不变时跳过 `style.transition` 字符串重写。
+- **修复**：
+  - `lastCursorDur` 记录上次 transition duration。
+  - 仅当 `dur !== lastCursorDur` 时重写 `cursorEl.style.transition`。
+  - `cursorEl.style.opacity = ""` 也加空值判断，避免每帧重复删除 inline opacity。
+  - `destroyCursor()` 重置 `lastCursorDur`。
+- **性能判断**：这是微优化，主要减少无意义 style 字符串解析和属性写入；体感差异预计很小，但风险低。
+
+### ✅ Neo / Neo-Plus 主题下切换标签页后顺滑光标上移
+- **状态**：已完成；已改为通过 SiYuan 内部 `EventBus.switch-protyle` 统一处理，默认主题和带进入动画的主题都走同一条“隐藏 - 稳定 - 淡入”路径。
+- **现象**：
+  - 切换标签页后，顺滑光标会相对当前行略微上移或偏移。
+  - 许多主题的标签页 / 内容切换动画会让 selection / Range 的目标坐标在切换后继续变化。
+  - 之前已经排除了 `line-height` / `getCursorRect` 公式本身的问题，根因不在这两个计算上。
+- **最终修复**：
+  - 通过 SiYuan 内部 `EventBus` 的 `switch-protyle` 触发切换处理。
+  - 切换时先隐藏旧位置光标，短窗口内等待目标坐标稳定。
+  - 坐标稳定后在新位置无过渡定位，再淡入显示。
+  - 修复旧配置 `cursor=false` 会阻断 `EventBus` 回调的问题；当前在 cursor 常开时强制 `enabled.cursor=true`，确保切换流程可执行。
+  - 清理了无用的 CSS 动画 / `transition` 检测代码，因为默认主题也接受隐藏淡入，统一走 `switch-protyle` 隐藏稳定淡入路径。
+- **修复结果**：
+  - 切换标签页后，光标不再因为主题动画或切换过渡而停在偏上的旧坐标。
+  - 默认主题、Neo、Neo-Plus 及其他带过渡动画的主题都使用同一套稳定定位流程。
+  - 不再依赖主题的 `animationend` 或 CSS 动画状态判断，兼容面更稳定。
 
 ### ✅ 撰写详尽的项目设计文档
 - `docs/DESIGN.md`（1006 行）覆盖：模块依赖图、状态机、关键算法（FLIP / Highlight / 边界检测）、配置项、决策记录、已知限制

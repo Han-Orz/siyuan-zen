@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.6.2 (2026-07-05) — Cursor Switch Polish + Focus Performance
+
+### Added
+- **顶栏银河图标**：替换原单圆环图标，开启态带星球旋转动画，并支持 `prefers-reduced-motion`。
+- **切换标签页稳定淡入**：`switch-protyle` 时先隐藏旧位置光标，等待新坐标稳定后再无跳动淡入，减少主题切换动画导致的光标偏移。
+
+### Changed
+- **Typewriter FLIP 采样优化**：Enter / Backspace 块位移动画从全编辑器 `[data-node-id]` 扫描改为当前块起止位置附近 sibling + 祖先层级窗口，降低长文档下的布局读取量。
+- **Ripple MutationObserver 缩域**：不再监听整个 `document.body`；仅在 focus active 时监听当前顶层块 subtree，并监听父容器一层 `childList` 捕获整块替换，mutation 刷新复用 rAF 队列。
+- **cursor 常开兼容**：加载旧存储时强制 `enabled.cursor = true`，避免历史 `cursor=false` 阻断 cursor EventBus 回调。
+- **版本号**：`package.json` / `plugin.json` 2.6.1 → 2.6.2。
+
+---
+
 ## v2.6.1 (2026-07-03) — Typewriter Scroll Bugs + Ripple Opacity 残留修复
 
 ### Fixed

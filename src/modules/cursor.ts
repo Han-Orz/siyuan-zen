@@ -46,6 +46,9 @@ const CURSOR_ID = "zentype-cursor";
 let cursorEl: HTMLDivElement | null = null;
 let pendingFrame: number | null = null;
 let removeTransitionFrame: number | null = null;
+let switchSettleFrame: number | null = null;
+let switchHiddenActive = false;
+let switchRevealPending = false;
 let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 .no-transition，保留 0.15s 跳移动画
 let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round 4 fix（capture + cooldown）：键盘事件后 150ms 内 scroll/ResizeObserver 知道本次更新是键盘驱动
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
@@ -229,6 +232,107 @@ function queueUpdate(): void {
   });
 }
 
+function sampleSwitchTarget(): { x: number; y: number; height: number } | null {
+  const rect = getCursorRect();
+  if (!rect || rect.height === 0) return null;
+  return { x: rect.x, y: rect.y, height: rect.height };
+}
+
+function hideCursorForSwitch(): void {
+  if (!cursorEl) return;
+  pauseBreathe();
+  if (removeTransitionFrame !== null) {
+    cancelAnimationFrame(removeTransitionFrame);
+    removeTransitionFrame = null;
+  }
+  cursorEl.classList.remove("hidden");
+  cursorEl.classList.remove("no-transition");
+  cursorEl.classList.add("no-animation");
+  switchHiddenActive = true;
+  cursorEl.style.opacity = "0";
+}
+
+function stopSwitchSettle(): void {
+  if (switchSettleFrame !== null) {
+    cancelAnimationFrame(switchSettleFrame);
+    switchSettleFrame = null;
+  }
+  switchRevealPending = false;
+  switchHiddenActive = false;
+}
+
+function finishAnimatedSwitch(): void {
+  stopSwitchSettle();
+  if (!cursorEl) {
+    queueUpdate();
+    return;
+  }
+
+  cursorEl.classList.add("no-transition");
+  switchRevealPending = true;
+  queueUpdate();
+
+  requestAnimationFrame(() => {
+    if (!cursorEl) return;
+    void cursorEl.offsetHeight;
+    switchRevealPending = false;
+    switchHiddenActive = false;
+    cursorEl.classList.remove("no-transition");
+    cursorEl.classList.remove("no-animation");
+    cursorEl.style.opacity = "";
+    scheduleResumeBreathe();
+  });
+}
+
+function startAnimatedSwitchSettle(): void {
+  stopSwitchSettle();
+  hideCursorForSwitch();
+
+  let lastTarget = sampleSwitchTarget();
+  let stableFrames = 0;
+  const startedAt = performance.now();
+  const minDurationMs = 240;
+  const maxDurationMs = 700;
+  const stableFrameTarget = 8;
+  const epsilonPx = 0.35;
+
+  const tick = () => {
+    switchSettleFrame = null;
+
+    const elapsedMs = performance.now() - startedAt;
+    const target = sampleSwitchTarget();
+    if (!target) {
+      if (elapsedMs >= maxDurationMs) {
+        finishAnimatedSwitch();
+        return;
+      }
+      switchSettleFrame = requestAnimationFrame(tick);
+      return;
+    }
+
+    const targetMoved =
+      lastTarget === null ||
+      Math.abs(target.x - lastTarget.x) > epsilonPx ||
+      Math.abs(target.y - lastTarget.y) > epsilonPx ||
+      Math.abs(target.height - lastTarget.height) > epsilonPx;
+
+    stableFrames = targetMoved ? 0 : stableFrames + 1;
+    lastTarget = target;
+
+    if (
+      elapsedMs >= maxDurationMs ||
+      (elapsedMs >= minDurationMs && stableFrames >= stableFrameTarget)
+    ) {
+      finishAnimatedSwitch();
+      return;
+    }
+
+    switchSettleFrame = requestAnimationFrame(tick);
+  };
+
+  switchSettleFrame = requestAnimationFrame(tick);
+}
+
 /**
  * 核心更新逻辑。
  * 时序：
@@ -364,7 +468,13 @@ function doUpdateCursor(): void {
       cursorEl.style.transition = `transform ${dur}s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease-out`;
       lastCursorDur = dur;
     }
-    if (cursorEl.style.opacity !== "") cursorEl.style.opacity = "";
+    if (
+      !switchHiddenActive &&
+      !switchRevealPending &&
+      cursorEl.style.opacity !== ""
+    ) {
+      cursorEl.style.opacity = "";
+    }
     cursorEl.style.transform = `translate3d(${rect.x}px, ${rect.y - yOffset}px, 0)`;
     cursorEl.style.height = `${rect.height}px`;
     prevCursorX = rect.x;
@@ -714,6 +824,7 @@ export function destroyCursor(): void {
     cancelAnimationFrame(removeTransitionFrame);
     removeTransitionFrame = null;
   }
+  stopSwitchSettle();
 
   // 移除 DOM 元素
   if (cursorEl) {
@@ -769,9 +880,9 @@ export function onProtyleLoaded(_protyle: IProtyle): void {
   queueUpdate();
 }
 
-/** switch-protyle 回调：切换 tab 时刷新光标位置 */
+/** switch-protyle 回调：切换 tab 时隐藏旧位置，稳定后在新位置淡入 */
 export function onProtyleSwitched(_protyle: IProtyle): void {
-  queueUpdate();
+  startAnimatedSwitchSettle();
 }
 
 /** click-editorcontent 回调：用户点击了编辑器内容 */

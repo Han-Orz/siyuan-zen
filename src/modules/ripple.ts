@@ -42,7 +42,8 @@ const modifiedBlocks = new Set<HTMLElement>();
 let unsubInputMode: (() => void) | null = null;
 let visualStateDirty = false;
 let mutationObserver: MutationObserver | null = null;
-let mutationRefreshQueued = false;
+let observedMutationBlock: HTMLElement | null = null;
+let observedMutationParent: HTMLElement | null = null;
 
 // P0-3: 块级 opacity 缓存——同一顶层块 + 无滚动 + 无块增删时跳过整个 applyBlockOpacity。
 // containerTop（rect.top）捕获祖先滚动；scrollTop 捕获 container 自身滚动。
@@ -60,6 +61,16 @@ let lastThemeMode: string | null = null;
 function getCurrentBlock(): HTMLElement | null {
   const cursor = getCursorElement();
   return (cursor?.closest("[data-node-id]") as HTMLElement) ?? null;
+}
+
+function getTopLevelBlock(currentBlock: HTMLElement, container: HTMLElement): HTMLElement {
+  let topBlock = currentBlock;
+  let parent: HTMLElement | null = currentBlock.parentElement;
+  while (parent && parent !== container) {
+    topBlock = parent;
+    parent = parent.parentElement;
+  }
+  return topBlock;
 }
 
 function visualWeightOf(block: HTMLElement, editorRect: DOMRect): number {
@@ -561,12 +572,7 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
   // 找 currentBlock 的顶层块（container 的直接子级）。
   // 嵌套块（列表项、列表内段落等）不单独设 opacity，继承父级——
   // 避免嵌套 opacity 叠加（父 0.5 × 子 0.5 = 0.25 不可见）。
-  let topBlock: HTMLElement = currentBlock;
-  let parent: HTMLElement | null = currentBlock.parentElement;
-  while (parent && parent !== container) {
-    topBlock = parent;
-    parent = parent.parentElement;
-  }
+  const topBlock = getTopLevelBlock(currentBlock, container);
 
   const editorRect = container.getBoundingClientRect();
   const blockId = topBlock.dataset?.nodeId ?? null;
@@ -634,10 +640,18 @@ function applyRippleNow(): void {
   }
 
   const currentBlock = getCurrentBlock();
-  if (!currentBlock) return;
+  if (!currentBlock) {
+    disconnectMutationObserver();
+    return;
+  }
 
   const container = currentBlock.closest(".protyle-wysiwyg") as HTMLElement | null;
-  if (!container) return;
+  if (!container) {
+    disconnectMutationObserver();
+    return;
+  }
+
+  bindMutationObserver(currentBlock, container);
 
   // 句级 dim color：仅在 OFF→ON 或主题切换时设 CSS 变量（避免每帧重写）。
   const themeMode = document.documentElement.getAttribute("data-theme-mode");
@@ -673,25 +687,60 @@ function applyRipple(): void {
   });
 }
 
-function mutationTouchesCurrentBlock(record: MutationRecord, currentBlock: HTMLElement): boolean {
+function disconnectMutationObserver(): void {
+  mutationObserver?.disconnect();
+  observedMutationBlock = null;
+  observedMutationParent = null;
+}
+
+function bindMutationObserver(currentBlock: HTMLElement, container: HTMLElement): void {
+  const topBlock = getTopLevelBlock(currentBlock, container);
+  const parent = topBlock.parentElement;
+  if (
+    mutationObserver &&
+    observedMutationBlock === topBlock &&
+    observedMutationParent === parent
+  ) {
+    return;
+  }
+
+  if (!mutationObserver) mutationObserver = new MutationObserver(onDomMutation);
+  mutationObserver.disconnect();
+  mutationObserver.observe(topBlock, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  if (parent) {
+    // Catch whole-block replacement; observing only the old block would miss
+    // the parent-level remove/insert mutation.
+    mutationObserver.observe(parent, { childList: true });
+  }
+  observedMutationBlock = topBlock;
+  observedMutationParent = parent;
+}
+
+function mutationTouchesCurrentBlock(
+  record: MutationRecord,
+  currentBlock: HTMLElement,
+  topBlock: HTMLElement,
+): boolean {
+  if (topBlock.contains(record.target)) return true;
   if (currentBlock.contains(record.target)) return true;
 
-  for (const node of Array.from(record.addedNodes)) {
+  for (const node of [...Array.from(record.addedNodes), ...Array.from(record.removedNodes)]) {
     if (node === currentBlock || currentBlock.contains(node)) return true;
+    if (node === topBlock || topBlock.contains(node)) return true;
     if (node.nodeType === Node.ELEMENT_NODE && (node as Element).contains(currentBlock)) return true;
+    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).contains(topBlock)) return true;
   }
 
   return false;
 }
 
 function scheduleMutationRefresh(): void {
-  if (mutationRefreshQueued) return;
-  mutationRefreshQueued = true;
-  queueMicrotask(() => {
-    mutationRefreshQueued = false;
-    if (!active) return;
-    applyRippleNow();
-  });
+  if (!active) return;
+  applyRipple();
 }
 
 // SiYuan inline tokenizers can re-render the current block after input/selectionchange.
@@ -700,12 +749,16 @@ function onDomMutation(records: MutationRecord[]): void {
 
   const currentBlock = getCurrentBlock();
   if (!currentBlock) return;
-  if (!records.some((record) => mutationTouchesCurrentBlock(record, currentBlock))) return;
+  const container = currentBlock.closest(".protyle-wysiwyg") as HTMLElement | null;
+  if (!container) return;
+  const topBlock = getTopLevelBlock(currentBlock, container);
+  if (!records.some((record) => mutationTouchesCurrentBlock(record, currentBlock, topBlock))) return;
 
   scheduleMutationRefresh();
 }
 
 function clearAll(options: { deepScan?: boolean; clearTransition?: boolean } = {}): void {
+  disconnectMutationObserver();
   const deepScan = options.deepScan ?? false;
   const clearTransition = options.clearTransition ?? false;
   if (!deepScan && !visualStateDirty) return;
@@ -769,13 +822,6 @@ export function initRipple(): void {
     ["input", inputHandler],
   ];
 
-  mutationObserver = new MutationObserver(onDomMutation);
-  mutationObserver.observe(document.body, {
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
-
   // P1-1: 订阅 inputMode。wheel/touchmove/blur/click 等退出事件不触发 selectionchange，
   // 旧版仅靠 selectionchange → clearAll 会让 ripple opacity 在滚动/失焦后残留。
   unsubInputMode = inputMode.subscribe((state) => {
@@ -802,7 +848,8 @@ export function destroyRipple(): void {
     mutationObserver.disconnect();
     mutationObserver = null;
   }
-  mutationRefreshQueued = false;
+  observedMutationBlock = null;
+  observedMutationParent = null;
 
   if (pendingFrame !== null) {
     cancelAnimationFrame(pendingFrame);

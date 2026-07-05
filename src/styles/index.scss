@@ -96,32 +96,72 @@ body.zentype-cursor-active .protyle-title__input { caret-color: transparent; }
 .layout__resize { user-select: none; }
 
 // ===== 顶栏图标两态 =====
-// 通过容器 class (.zentype-topbar-icon--on / --off) 的后代选择器
-// 控制 SVG <circle> 的 fill / stroke / animation。SVG DOM 永不替换，
-// 避免摧毁 SiYuan 内部持有的元素引用。
+// 银河 SVG 固定 22px；开启态让几个彩色星球轻微转动。
 
-@keyframes zentype-breathe-ring {
-  0%, 100% { opacity: 0.5; }
-  50%      { opacity: 1.0; }
+@keyframes zentype-galaxy-drift-fast {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
-// off：空心粗环（无动画）
-.zentype-topbar-icon--off svg circle {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
+@keyframes zentype-galaxy-drift-slow {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
 }
 
-// on：实心圆 + 呼吸
-.zentype-topbar-icon--on svg circle {
+.zentype-topbar-icon--off svg.zt-galaxy-icon,
+.zentype-topbar-icon--on svg.zt-galaxy-icon {
+  width: 24px;
+  height: 24px;
+  display: block;
+  overflow: visible;
+}
+
+.zt-galaxy-icon {
+  transform-origin: center;
+}
+
+.zt-galaxy-art {
+  transform-box: view-box;
+  transform-origin: center;
+}
+
+.zt-galaxy-icon path {
   fill: currentColor;
-  stroke: none;
-  animation: zentype-breathe-ring 3s ease-in-out infinite;
 }
 
-// on 状态下 hover 暂停
-.zentype-topbar-icon--on:hover svg circle {
+.zt-galaxy-planet {
+  transform-box: view-box;
+  transform-origin: center;
+}
+
+.zentype-topbar-icon--off .zt-galaxy-icon {
+  filter: saturate(0.72);
+  opacity: 0.78;
+}
+
+.zentype-topbar-icon--on .zt-galaxy-icon {
+  opacity: 1;
+}
+
+.zentype-topbar-icon--on .zt-galaxy-planet--orange,
+.zentype-topbar-icon--on .zt-galaxy-planet--teal,
+.zentype-topbar-icon--on .zt-galaxy-planet--green {
+  animation: zentype-galaxy-drift-fast 9s linear infinite;
+}
+
+.zentype-topbar-icon--on .zt-galaxy-planet--red,
+.zentype-topbar-icon--on .zt-galaxy-planet--purple {
+  animation: zentype-galaxy-drift-slow 13s linear infinite;
+}
+
+.zentype-topbar-icon--on:hover .zt-galaxy-planet {
   animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zentype-topbar-icon--on .zt-galaxy-planet {
+    animation: none;
+  }
 }
 
 // ===== 涟漪聚焦句级 dimming (CSS Custom Highlight API) =====

@@ -6,6 +6,7 @@ import * as inputMode from "./inputMode";
 import { isInAllowElements } from "../utils/boundary";
 
 const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE, TYPING_GAP_MS, CLICK_CENTER_LOW, CLICK_CENTER_HIGH } = TYPEWRITER_CONFIG;
+const FLIP_BLOCK_RADIUS = 30;
 
 let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
 let pendingScroll: number | null = null;
@@ -46,7 +47,7 @@ function easeInOutCubic(t: number): number {
  * 精简 FLIP 动画：Enter / Backspace 块变更后，下方块平滑过渡回原位。
  *
  * 三阶段批量执行：
- *   Phase 1 (Invert): 所有块一次性写完 transform+transition:none，不读 offsetHeight
+ *   Phase 1 (Invert): 采样块一次性写完 transform+transition:none，不读 offsetHeight
  *   Phase 2 (Commit):  读 editor.offsetHeight 一次，唯一 layout — 所有 Invert 一起生效
  *   Phase 3 (Play):    一个 rAF 统一启动所有 transition，一个 setTimeout 集中清理
  *
@@ -63,7 +64,69 @@ function clearLastFLIPElements(): void {
   lastFLIPElements = [];
 }
 
-function animateBlockShift(editor: HTMLElement): void {
+function isBlockElement(el: Element | null): el is HTMLElement {
+  return el instanceof HTMLElement && el.hasAttribute("data-node-id");
+}
+
+function addSiblingWindow(block: HTMLElement, blocks: Set<HTMLElement>): void {
+  blocks.add(block);
+
+  let prev = block.previousElementSibling;
+  let prevCount = 0;
+  while (prev && prevCount < FLIP_BLOCK_RADIUS) {
+    if (isBlockElement(prev)) {
+      blocks.add(prev);
+      prevCount++;
+    }
+    prev = prev.previousElementSibling;
+  }
+
+  let next = block.nextElementSibling;
+  let nextCount = 0;
+  while (next && nextCount < FLIP_BLOCK_RADIUS) {
+    if (isBlockElement(next)) {
+      blocks.add(next);
+      nextCount++;
+    }
+    next = next.nextElementSibling;
+  }
+}
+
+function addFlipWindowsFromBlock(block: HTMLElement, editor: HTMLElement, blocks: Set<HTMLElement>): void {
+  let current: HTMLElement | null = block;
+  while (current && current !== editor && editor.contains(current)) {
+    if (isBlockElement(current)) addSiblingWindow(current, blocks);
+
+    const parent: HTMLElement | null = current.parentElement;
+    if (!parent || parent === editor) break;
+
+    const ancestor = parent.closest("[data-node-id]") as HTMLElement | null;
+    if (!ancestor || ancestor === current || !editor.contains(ancestor)) break;
+    current = ancestor;
+  }
+}
+
+function collectFlipBlocks(editor: HTMLElement, range: Range): HTMLElement[] {
+  const blocks = new Set<HTMLElement>();
+  const startBlock = elementFromNode(range.startContainer)?.closest("[data-node-id]") as HTMLElement | null;
+  if (startBlock && editor.contains(startBlock)) {
+    addFlipWindowsFromBlock(startBlock, editor, blocks);
+  }
+
+  if (!range.collapsed) {
+    const endBlock = elementFromNode(range.endContainer)?.closest("[data-node-id]") as HTMLElement | null;
+    if (endBlock && endBlock !== startBlock && editor.contains(endBlock)) {
+      addFlipWindowsFromBlock(endBlock, editor, blocks);
+    }
+  }
+
+  // Rare fallback for unexpected selection containers: keep the old behavior.
+  return blocks.size > 0
+    ? Array.from(blocks)
+    : Array.from(editor.querySelectorAll<HTMLElement>("[data-node-id]"));
+}
+
+function animateBlockShift(editor: HTMLElement, range: Range): void {
   const token = ++flipGeneration;
 
   // 取消前一轮 FLIP cleanup，防止连续 Enter 时前一轮 Phase 3 的 setTimeout 清空当前 transform
@@ -76,10 +139,11 @@ function animateBlockShift(editor: HTMLElement): void {
   // cleanup setTimeout 已被上方取消，被 |delta|<2 跳过的元素会永久残留 transition。
   clearLastFLIPElements();
 
-  // First: 捕获阶段同步快照所有块的旧位置（在 Enter 的 capture handler 中调用，
-  // 此时 SiYuan bubble handler 尚未改 DOM）
+  // First: 捕获阶段同步快照当前块附近的旧位置（在 Enter 的 capture handler 中调用，
+  // 此时 SiYuan bubble handler 尚未改 DOM）。只采样光标附近 sibling + 祖先层级，
+  // 避免长文档里对所有块做 getBoundingClientRect()。
   const first = new Map<HTMLElement, number>();
-  editor.querySelectorAll<HTMLElement>('[data-node-id]').forEach(el => {
+  collectFlipBlocks(editor, range).forEach(el => {
     first.set(el, el.getBoundingClientRect().top);
   });
 
@@ -480,7 +544,7 @@ export function initTypewriter(): void {
         const editor = sel.anchorNode?.parentElement?.closest(
           ".protyle-wysiwyg",
         ) as HTMLElement | null;
-        if (editor && shouldAnimateBlockShift) animateBlockShift(editor);
+        if (editor && shouldAnimateBlockShift) animateBlockShift(editor, sel.getRangeAt(0));
         // 延迟两帧等 SiYuan 布局收敛后再触发滚动对齐
         // 不能用 scheduleCheck() 唯一一帧，因为思源在 Enter/Backspace 的 bubble
         // handler 中还要修改 DOM，一帧不够——两帧后布局稳定
