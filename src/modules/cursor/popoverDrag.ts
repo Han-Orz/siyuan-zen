@@ -9,15 +9,23 @@ interface PopoverDragBinding {
   onMouseDown: EventListener;
   onMouseMove: EventListener;
   onMouseUp: EventListener;
+  onMouseMoveOptions: AddEventListenerOptions;
 }
 let popoverDragBinding: PopoverDragBinding | null = null;
+let popoverRemovalObserver: MutationObserver | null = null;
+
+function disconnectPopoverRemovalObserver(): void {
+  popoverRemovalObserver?.disconnect();
+  popoverRemovalObserver = null;
+}
 
 /** 绑定 block__popover 拖动手柄（.resize__move）的 mousedown/mousemove/mouseup */
 export function unbindPopoverDrag(): void {
   if (!popoverDragBinding) return;
-  const { dragEl, onMouseDown, onMouseMove, onMouseUp } = popoverDragBinding;
+  disconnectPopoverRemovalObserver();
+  const { dragEl, onMouseDown, onMouseMove, onMouseUp, onMouseMoveOptions } = popoverDragBinding;
   dragEl.removeEventListener("mousedown", onMouseDown);
-  document.removeEventListener("mousemove", onMouseMove);
+  document.removeEventListener("mousemove", onMouseMove, onMouseMoveOptions);
   document.removeEventListener("mouseup", onMouseUp);
   popoverDragBinding = null;
 }
@@ -61,8 +69,17 @@ export function bindPopoverDrag(
   // mousedown 绑在拖动手柄上（只有点击拖手才进入拖动状态）
   // mousemove/mouseup 绑在 document 上（保证鼠标移出手柄时仍能跟踪）
   dragEl.addEventListener("mousedown", onMouseDown);
-  document.addEventListener("mousemove", onMouseMove, { passive: true });
+  const onMouseMoveOptions = { passive: true };
+  document.addEventListener("mousemove", onMouseMove, onMouseMoveOptions);
   document.addEventListener("mouseup", onMouseUp);
+
+  const observerRoot = blockPopover.parentElement;
+  if (observerRoot && typeof MutationObserver !== "undefined") {
+    popoverRemovalObserver = new MutationObserver(() => {
+      if (!blockPopover.isConnected) unbindPopoverDrag();
+    });
+    popoverRemovalObserver.observe(observerRoot, { childList: true });
+  }
 
   popoverDragBinding = {
     blockPopover,
@@ -70,5 +87,6 @@ export function bindPopoverDrag(
     onMouseDown,
     onMouseMove,
     onMouseUp,
+    onMouseMoveOptions,
   };
 }

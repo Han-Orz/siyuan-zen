@@ -141,6 +141,12 @@ function applyFadeAndScale(
   el.style.height = `${pos.height}px`;
 }
 
+export function flushCursorTransitionIfNeeded(el: HTMLDivElement): boolean {
+  if (!el.classList.contains("no-transition")) return false;
+  void el.offsetHeight;
+  return true;
+}
+
 /**
  * commit 2（已下线）：squish / bounce 触发函数。用户测试后认为缩放弹动画太突兀，
  * 整个边缘缩放动画路线已下线；保留 case B 的平滑 opacity 淡出。
@@ -211,7 +217,7 @@ const popoverDragContext: PopoverDragContext = {
  *   4. 边界检测 → 不通过则 pauseBreathe + return（光标保留在最后位置，停在 Phase 1）
  *   5. 计算 zIndex（基于 window.siyuan.zIndex + 1）
  *   6. 写 transform / height / zIndex（commit 1：边缘淡出态走 applyFadeAndScale）
- *   7. 强制布局同步 → rAF 移除 no-transition
+ *   7. no-transition 生效时同步布局 → rAF 移除 no-transition
  *   8. scheduleBreathe() 延迟恢复呼吸（边缘附近不恢复，保持暂停）
  */
 function doUpdateCursor(): void {
@@ -346,15 +352,15 @@ function doUpdateCursor(): void {
   // 显示光标（commit 1：可能仍带 .hidden 残留，离屏分支不再加 .hidden 但清理一次保险）
   cursorEl.classList.remove("hidden");
 
-  // 7) 强制布局同步（让 no-transition 时也能立即更新位置）
-  void cursorEl.offsetHeight;
-
-  // 下一帧恢复 transition（transform / height / opacity 过渡）
-  if (removeTransitionFrame !== null) cancelAnimationFrame(removeTransitionFrame);
-  removeTransitionFrame = requestAnimationFrame(() => {
-    removeTransitionFrame = null;
-    cursorEl?.classList.remove("no-transition");
-  });
+  // 7) 仅在 no-transition 生效时同步一次布局，让瞬移位置先提交，再恢复过渡。
+  if (flushCursorTransitionIfNeeded(cursorEl)) {
+    // 下一帧恢复 transition（transform / height / opacity 过渡）
+    if (removeTransitionFrame !== null) cancelAnimationFrame(removeTransitionFrame);
+    removeTransitionFrame = requestAnimationFrame(() => {
+      removeTransitionFrame = null;
+      cursorEl?.classList.remove("no-transition");
+    });
+  }
 
   // 8) commit 1：边缘附近时保持呼吸暂停（避免动画 opacity 与 inline opacity 冲突）
   //    远离边缘（distance >= ZONE）才按 BLINK_DELAY_MS 恢复呼吸

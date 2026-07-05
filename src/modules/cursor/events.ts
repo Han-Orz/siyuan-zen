@@ -47,6 +47,9 @@ export function bindCursorDocumentEvents(context: CursorEventContext): void {
     // markKeyboardPending 启动 150ms 倒计时，期间 scroll/ResizeObserver 不加 .no-transition
     ["keydown", (e) => {
       const ke = e as KeyboardEvent;
+      if (ke.key === "Enter" || ke.key === "Backspace") {
+        inputModeTriggers.onEnterOrBackspaceEdit();
+      }
       if (ke.key === "ArrowUp" || ke.key === "ArrowDown" ||
           ke.key === "PageUp" || ke.key === "PageDown") {
         inputModeTriggers.onVerticalNavigationKey();

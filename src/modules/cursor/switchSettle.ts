@@ -10,6 +10,7 @@ export interface SwitchSettleContext {
 }
 
 let switchSettleFrame: number | null = null;
+let switchRevealFrame: number | null = null;
 let switchHiddenActive = false;
 let switchRevealPending = false;
 
@@ -30,6 +31,10 @@ export function stopSwitchSettle(): void {
     cancelAnimationFrame(switchSettleFrame);
     switchSettleFrame = null;
   }
+  if (switchRevealFrame !== null) {
+    cancelAnimationFrame(switchRevealFrame);
+    switchRevealFrame = null;
+  }
   switchRevealPending = false;
   switchHiddenActive = false;
 }
@@ -46,9 +51,14 @@ function finishAnimatedSwitch(ctx: SwitchSettleContext): void {
   switchRevealPending = true;
   ctx.queueUpdate();
 
-  requestAnimationFrame(() => {
+  switchRevealFrame = requestAnimationFrame(() => {
+    switchRevealFrame = null;
     const current = ctx.getCursorElement();
-    if (!current) return;
+    if (!current) {
+      switchRevealPending = false;
+      switchHiddenActive = false;
+      return;
+    }
     void current.offsetHeight;
     switchRevealPending = false;
     switchHiddenActive = false;

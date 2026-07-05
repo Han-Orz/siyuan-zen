@@ -48,6 +48,7 @@ let observedMutationParent: HTMLElement | null = null;
 // P0-3: 块级 opacity 缓存——同一顶层块 + 无滚动 + 无块增删时跳过整个 applyBlockOpacity。
 // containerTop（rect.top）捕获祖先滚动；scrollTop 捕获 container 自身滚动。
 let lastBlockOpacityBlockId: string | null = null;
+let lastBlockOpacityContainer: HTMLElement | null = null;
 let lastBlockOpacityContainerTop: number | null = null;
 let lastBlockOpacityScrollTop: number | null = null;
 let lastBlockOpacityChildCount: number | null = null;
@@ -78,6 +79,32 @@ function visualWeightOf(block: HTMLElement, editorRect: DOMRect): number {
   const visTop = Math.max(r.top, editorRect.top);
   const visBot = Math.min(r.bottom, editorRect.bottom);
   return Math.max(0, Math.min(1, Math.max(0, visBot - visTop) / (editorRect.height || 1)));
+}
+
+interface BlockOpacityCacheSnapshot {
+  container: HTMLElement | null;
+  blockId: string | null;
+  containerTop: number | null;
+  scrollTop: number | null;
+  childCount: number | null;
+}
+
+export function isSameBlockOpacityCacheTarget(
+  cache: BlockOpacityCacheSnapshot,
+  container: HTMLElement,
+  blockId: string | null,
+  containerTop: number,
+  scrollTop: number,
+  childCount: number,
+): boolean {
+  return (
+    blockId !== null &&
+    cache.container === container &&
+    blockId === cache.blockId &&
+    containerTop === cache.containerTop &&
+    scrollTop === cache.scrollTop &&
+    childCount === cache.childCount
+  );
 }
 
 // --- Caret offset helpers ---
@@ -576,13 +603,13 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
   const childCount = container.childElementCount;
 
   // P0-3: 同一顶层块 + 无滚动 + 无块增删 → distance/weight/opacity 与上一帧完全相同，跳过。
-  if (
-    blockId !== null &&
-    blockId === lastBlockOpacityBlockId &&
-    containerTop === lastBlockOpacityContainerTop &&
-    scrollTop === lastBlockOpacityScrollTop &&
-    childCount === lastBlockOpacityChildCount
-  ) {
+  if (isSameBlockOpacityCacheTarget({
+    container: lastBlockOpacityContainer,
+    blockId: lastBlockOpacityBlockId,
+    containerTop: lastBlockOpacityContainerTop,
+    scrollTop: lastBlockOpacityScrollTop,
+    childCount: lastBlockOpacityChildCount,
+  }, container, blockId, containerTop, scrollTop, childCount)) {
     return;
   }
 
@@ -593,6 +620,7 @@ function applyBlockOpacity(container: HTMLElement, currentBlock: HTMLElement): v
 
   // 缓存仅在成功应用后更新——fromIndex===-1 时不缓存，下次重试。
   lastBlockOpacityBlockId = blockId;
+  lastBlockOpacityContainer = container;
   lastBlockOpacityContainerTop = containerTop;
   lastBlockOpacityScrollTop = scrollTop;
   lastBlockOpacityChildCount = childCount;
@@ -779,6 +807,7 @@ function clearAll(options: { deepScan?: boolean; clearTransition?: boolean } = {
   resetSentenceCache();
   // 重置缓存：视觉状态已清，下次 apply 必须重建。
   lastBlockOpacityBlockId = null;
+  lastBlockOpacityContainer = null;
   lastBlockOpacityContainerTop = null;
   lastBlockOpacityScrollTop = null;
   lastBlockOpacityChildCount = null;

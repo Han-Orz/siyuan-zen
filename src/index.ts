@@ -17,6 +17,7 @@ import { initRipple, destroyRipple } from "./modules/ripple";
 import * as inputMode from "./modules/inputMode";
 import * as inputModeTriggers from "./modules/inputModeTriggers";
 import type { ModuleEnabled, ModuleName } from "./types";
+import { runLifecycleSteps } from "./utils/lifecycle";
 import mainCss from "./styles/index.scss";
 
 const STYLE_ID = "main";
@@ -42,6 +43,16 @@ export default class ZenType extends Plugin {
   private saveEnabledPromise: Promise<unknown> = Promise.resolve();
 
   async onload(): Promise<void> {
+    try {
+      await this.loadPlugin();
+    } catch (error) {
+      this.cleanupResources();
+      console.error("[zenType] failed to load:", error);
+      throw error;
+    }
+  }
+
+  private async loadPlugin(): Promise<void> {
     const saved = await this.loadData(STORAGE_KEY);
     if (saved && typeof saved === "object") {
       this.enabled = { ...this.enabled, ...(saved as Partial<ModuleEnabled>) };
@@ -180,19 +191,33 @@ export default class ZenType extends Plugin {
   }
 
   onunload(): void {
-    // 1) 先退订 EventBus（必须在销毁模块前完成，否则回调可能引用已销毁的状态）
-    this.eventBusOffFns.forEach((off) => off());
+    this.cleanupResources();
+    console.log("zenType unloaded");
+  }
+
+  private cleanupResources(): void {
+    const eventBusOffFns = this.eventBusOffFns;
     this.eventBusOffFns = [];
 
-    // 2) 销毁模块
-    destroyCursor();
-    destroyTypewriter();
-    destroyRipple();
-    inputMode.reset();
-    removeStyle(STYLE_ID);
-    document.body.classList.remove("zentype-cursor-active");
+    runLifecycleSteps([
+      ...eventBusOffFns.map((off, index) => ({
+        name: `eventBus.off#${index + 1}`,
+        run: off,
+      })),
+      { name: "destroyCursor", run: destroyCursor },
+      { name: "destroyTypewriter", run: destroyTypewriter },
+      { name: "destroyRipple", run: destroyRipple },
+      { name: "inputMode.reset", run: () => inputMode.reset() },
+      { name: "removeStyle", run: () => removeStyle(STYLE_ID) },
+      {
+        name: "removeCursorBodyClass",
+        run: () => document.body.classList.remove("zentype-cursor-active"),
+      },
+    ], (name, error) => {
+      console.error(`[zenType] lifecycle cleanup failed in ${name}:`, error);
+    });
+
     this.topBarItem = null;
-    console.log("zenType unloaded");
   }
 
   // 方案 γ：容器 class 互斥 toggle + aria-label 更新；永不修改 SVG 内部 DOM

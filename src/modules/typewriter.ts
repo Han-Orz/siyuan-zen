@@ -17,6 +17,7 @@ let activeFLIPTimer: ReturnType<typeof setTimeout> | null = null;
 let lastFLIPElements: HTMLElement[] = []; // P3-7: 上一轮 FLIP 修改的元素，供下一轮入口清理残留 inline transition
 let flipGeneration = 0;
 let initialized = false;
+const deferredFrames = new Set<number>();
 
 // debounce / IME 状态（修复 3a/3b/3c）
 let lastInputAt = 0;                                       // 最近一次 input 事件时间戳；0 = 空闲
@@ -34,6 +35,23 @@ let pendingCheck: number | null = null;
 let cachedContainer: HTMLElement | null = null;
 let cachedCursorElement: Element | null = null;
 let lastCheckRect: { x: number; y: number; width: number; height: number } | null = null;
+
+function requestDeferredFrame(callback: FrameRequestCallback): number {
+  const frame = requestAnimationFrame((time) => {
+    deferredFrames.delete(frame);
+    if (!initialized) return;
+    callback(time);
+  });
+  deferredFrames.add(frame);
+  return frame;
+}
+
+function cancelDeferredFrames(): void {
+  for (const frame of deferredFrames) {
+    cancelAnimationFrame(frame);
+  }
+  deferredFrames.clear();
+}
 
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
@@ -149,7 +167,7 @@ function animateBlockShift(editor: HTMLElement, range: Range): void {
   });
 
   // 等一帧让 SiYuan 完成 DOM 变更
-  requestAnimationFrame(() => {
+  requestDeferredFrame(() => {
     if (token !== flipGeneration) return;
 
     const modifiedElements: HTMLElement[] = [];
@@ -174,7 +192,7 @@ function animateBlockShift(editor: HTMLElement, range: Range): void {
     void editor.offsetHeight;
 
     // Phase 3 (Play): 一个 rAF 统一启动
-    requestAnimationFrame(() => {
+    requestDeferredFrame(() => {
       if (token !== flipGeneration) return;
 
       for (const el of modifiedElements) {
@@ -411,7 +429,7 @@ function centerIfFarOff(target: Element): void {
   if (composing) return;
   if (target.closest('[data-type="a"], button')) return;
   // 点击后等光标定位稳定（思源 selectionchange 在 click 之后异步触发）
-  requestAnimationFrame(() => {
+  requestDeferredFrame(() => {
     if (composing) return;  // rAF 期间 composition 开始则放弃
     const rect = getCursorRect();
     if (!rect) return;
@@ -549,8 +567,8 @@ export function initTypewriter(): void {
         // 延迟两帧等 SiYuan 布局收敛后再触发滚动对齐
         // 不能用 scheduleCheck() 唯一一帧，因为思源在 Enter/Backspace 的 bubble
         // handler 中还要修改 DOM，一帧不够——两帧后布局稳定
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
+        requestDeferredFrame(() => {
+          requestDeferredFrame(() => {
             // 同时清掉 lastCheckRect 让 checkAndScroll 不因坐标未变而跳过
             lastCheckRect = null;
             // Enter vs Backspace 区别处理：
@@ -590,6 +608,7 @@ export function destroyTypewriter(): void {
   eventListeners = [];
   initialized = false;
   flipGeneration += 1;
+  cancelDeferredFrames();
 
   if (pendingScroll !== null) {
     cancelAnimationFrame(pendingScroll);
