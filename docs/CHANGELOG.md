@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.6.3 (2026-07-05) — Cursor Submodule Split + Lifecycle Utility（稳定版）
+
+项目进入稳定期后的内部清理小版本，对用户行为基本无影响：拆 cursor、统一延迟帧追踪、修潜在 popover 观察者残留。
+
+### Added
+- **`src/utils/lifecycle.ts`** — `requestDeferredFrame()` / `runLifecycleSteps()`：集中管理延迟帧（`requestAnimationFrame`）与生命周期步骤隔离（任一步抛错不影响后续），被 cursor（inputMode 触发、switchSettle reveal）、typewriter（click 居中、destroy 取消挂起帧）、ripple（popover 观察者自清理）等模块统一使用
+
+### Changed
+- **Cursor 模块拆分**：`src/modules/cursor.ts` 576 行 → `events.ts`（111）/ `popoverDrag.ts`（92）/ `resizeBindings.ts`（62）/ `scrollBindings.ts`（80）/ `switchSettle.ts`（127）/ `edgeArrow.ts`（92）六个聚焦子模块 + 集中 `src/modules/inputModeTriggers.ts`（63）；外部导入面（`cursor.ts` 主入口）不变
+- **popover 拖动观察者自清理**：弹窗脱离 DOM 时自动拆绑；修复"旧弹窗关闭后绑定残留阻塞新弹窗"
+- **ripple 块级 opacity 缓存按容器隔离**：`isSameBlockOpacityCacheTarget` 同时校验顶层容器 ID，避免跨块串台
+- **siyuan 依赖锁版**：`devDeps` `siyuan: "^1.2.1"`；仓库行尾统一 LF；lockfile 收敛为 `pnpm-lock.yaml` 单一来源（移除 2421 行 `package-lock.json`）
+- **文档**：`docs/DESIGN.md` + `docs/BROOKS_SWEEP_REPORT.md` 与当前架构同步；新增 `docs/superpowers/plans/2026-07-05-architecture-refactor-roadmap.md` 与 `2026-07-05-characterization-tests-proposal.md`（本次拆分工作的规划记录）
+- **版本号**：`package.json` / `plugin.json` 2.6.2 → 2.6.3
+
+### Removed
+- `tests/` 目录（Node 测试运行器 + 7 个 lifecycle 集成测试 + siyuan 桩模块），项目稳定后迁移至参考文件夹；`package.json` 同步移除 `"test": "node tests/run.mjs"` 脚本
+
+---
+
 ## v2.6.2 (2026-07-05) — Cursor Switch Polish + Focus Performance
 
 ### Added
