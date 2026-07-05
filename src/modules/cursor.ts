@@ -28,7 +28,6 @@
 import type { IProtyle, IWebSocketData } from "siyuan/types";
 import { CURSOR_CONFIG, EDGE_FADE, TRANSITION } from "../config";
 import { getCursorRect } from "../utils/getCursorRect";
-import { findAllScrollableAncestors } from "../utils/scroll";
 import { isInAllowElements } from "../utils/boundary";
 import { isMobile } from "../utils/isMobile";
 import { getEffectiveZIndex } from "../utils/getEffectiveZIndex";
@@ -40,6 +39,32 @@ import {
   destroyBreathing,
 } from "./cursor/breathing";
 import { destroyEdgeArrow, updateEdgeArrow } from "./cursor/edgeArrow";
+import {
+  bindScrollContainerEvents,
+  destroyScrollContainerEvents,
+} from "./cursor/scrollBindings";
+import {
+  bindResizeObservers,
+  destroyResizeObservers,
+  type ResizeBindingContext,
+} from "./cursor/resizeBindings";
+import {
+  bindPopoverDrag,
+  unbindPopoverDrag,
+  type PopoverDragContext,
+} from "./cursor/popoverDrag";
+import {
+  bindCursorDocumentEvents,
+  destroyCursorDocumentEvents,
+  type CursorEventContext,
+} from "./cursor/events";
+import {
+  startSwitchSettle,
+  stopSwitchSettle,
+  isSwitchHiddenActive,
+  isSwitchRevealPending,
+  type SwitchSettleContext,
+} from "./cursor/switchSettle";
 import * as inputMode from "./inputMode";
 
 const CURSOR_ID = "zentype-cursor";
@@ -47,9 +72,6 @@ const CURSOR_ID = "zentype-cursor";
 let cursorEl: HTMLDivElement | null = null;
 let pendingFrame: number | null = null;
 let removeTransitionFrame: number | null = null;
-let switchSettleFrame: number | null = null;
-let switchHiddenActive = false;
-let switchRevealPending = false;
 let pendingKeyboardUpdate = false; // round 4 fix：Enter 触发滚动时跳过 .no-transition，保留 0.15s 跳移动画
 let keyboardCooldownTimer: ReturnType<typeof setTimeout> | null = null; // round 4 fix（capture + cooldown）：键盘事件后 150ms 内 scroll/ResizeObserver 知道本次更新是键盘驱动
 let lastGoodCursorPos: { x: number; y: number; height: number } | null = null; // commit 1：上一次在视口内的光标位置，用于离屏时保持可见位置
@@ -61,7 +83,6 @@ let initialized = false;
 let cachedZIndexElement: Element | null = null;
 let cachedEffectiveZIndex = 0;
 let cachedFullscreenElement: Element | null = null;
-let lastScrollBindingCursorElement: Element | null = null;
 
 function markKeyboardPending(): void {
   pendingKeyboardUpdate = true;
@@ -82,37 +103,8 @@ function transitionDurationForDistance(dist: number): number {
   }
   return TRANSITION.TIERS[TRANSITION.TIERS.length - 1].duration;
 }
-let eventListeners: Array<[string, EventListener, AddEventListenerOptions?]> = [];
-
-// round 3 P1: ResizeObserver / Popover 拖动 / 滚动容器事件
-let protyleContentObserver: ResizeObserver | null = null;
-let protyleWysiwygObserver: ResizeObserver | null = null;
-let lastBoundProtyleContent: HTMLElement | null = null;
-let lastBoundProtyleWysiwyg: HTMLElement | null = null;
-
 // ── 聚焦/打字机模式辅助状态 ──
-let isPasting = false;
 let unsubInputMode: (() => void) | null = null;
-
-interface MouseDownInfo {
-  selectionText: string;
-}
-let mouseDownInfo: MouseDownInfo | null = null;
-
-interface ScrollEventBinding {
-  el: HTMLElement;
-  handler: EventListener;
-}
-const scrollEventBindings: ScrollEventBinding[] = [];
-
-interface PopoverDragBinding {
-  blockPopover: HTMLElement;
-  dragEl: HTMLElement;
-  onMouseDown: EventListener;
-  onMouseMove: EventListener;
-  onMouseUp: EventListener;
-}
-let popoverDragBinding: PopoverDragBinding | null = null;
 
 function createCursorElement(): HTMLDivElement {
   let el = document.getElementById(CURSOR_ID) as HTMLDivElement | null;
@@ -164,106 +156,51 @@ function queueUpdate(): void {
   });
 }
 
+const scrollBindingContext = {
+  getCursorElement: () => cursorEl,
+  isKeyboardUpdatePending: () => pendingKeyboardUpdate,
+  pauseBreathe,
+  queueUpdate,
+};
+
 function sampleSwitchTarget(): { x: number; y: number; height: number } | null {
   const rect = getCursorRect();
   if (!rect || rect.height === 0) return null;
   return { x: rect.x, y: rect.y, height: rect.height };
 }
 
-function hideCursorForSwitch(): void {
-  if (!cursorEl) return;
-  pauseBreathe();
+function cancelRemoveTransitionFrame(): void {
   if (removeTransitionFrame !== null) {
     cancelAnimationFrame(removeTransitionFrame);
     removeTransitionFrame = null;
   }
-  cursorEl.classList.remove("hidden");
-  cursorEl.classList.remove("no-transition");
-  cursorEl.classList.add("no-animation");
-  switchHiddenActive = true;
-  cursorEl.style.opacity = "0";
 }
 
-function stopSwitchSettle(): void {
-  if (switchSettleFrame !== null) {
-    cancelAnimationFrame(switchSettleFrame);
-    switchSettleFrame = null;
-  }
-  switchRevealPending = false;
-  switchHiddenActive = false;
-}
+const switchSettleContext: SwitchSettleContext = {
+  getCursorElement: () => cursorEl,
+  sampleTarget: sampleSwitchTarget,
+  cancelRemoveTransitionFrame,
+  pauseBreathe,
+  queueUpdate,
+  scheduleResumeBreathe,
+};
 
-function finishAnimatedSwitch(): void {
-  stopSwitchSettle();
-  if (!cursorEl) {
-    queueUpdate();
-    return;
-  }
+const cursorEventContext: CursorEventContext = {
+  markKeyboardPending,
+  onScrollOrWheel,
+  queueUpdate,
+};
 
-  cursorEl.classList.add("no-transition");
-  switchRevealPending = true;
-  queueUpdate();
+const resizeBindingContext: ResizeBindingContext = {
+  getCursorElement: () => cursorEl,
+  isKeyboardUpdatePending: () => pendingKeyboardUpdate,
+  queueUpdate,
+};
 
-  requestAnimationFrame(() => {
-    if (!cursorEl) return;
-    void cursorEl.offsetHeight;
-    switchRevealPending = false;
-    switchHiddenActive = false;
-    cursorEl.classList.remove("no-transition");
-    cursorEl.classList.remove("no-animation");
-    cursorEl.style.opacity = "";
-    scheduleResumeBreathe();
-  });
-}
-
-function startAnimatedSwitchSettle(): void {
-  stopSwitchSettle();
-  hideCursorForSwitch();
-
-  let lastTarget = sampleSwitchTarget();
-  let stableFrames = 0;
-  const startedAt = performance.now();
-  const minDurationMs = 240;
-  const maxDurationMs = 700;
-  const stableFrameTarget = 8;
-  const epsilonPx = 0.35;
-
-  const tick = () => {
-    switchSettleFrame = null;
-
-    const elapsedMs = performance.now() - startedAt;
-    const target = sampleSwitchTarget();
-    if (!target) {
-      if (elapsedMs >= maxDurationMs) {
-        finishAnimatedSwitch();
-        return;
-      }
-      switchSettleFrame = requestAnimationFrame(tick);
-      return;
-    }
-
-    const targetMoved =
-      lastTarget === null ||
-      Math.abs(target.x - lastTarget.x) > epsilonPx ||
-      Math.abs(target.y - lastTarget.y) > epsilonPx ||
-      Math.abs(target.height - lastTarget.height) > epsilonPx;
-
-    stableFrames = targetMoved ? 0 : stableFrames + 1;
-    lastTarget = target;
-
-    if (
-      elapsedMs >= maxDurationMs ||
-      (elapsedMs >= minDurationMs && stableFrames >= stableFrameTarget)
-    ) {
-      finishAnimatedSwitch();
-      return;
-    }
-
-    switchSettleFrame = requestAnimationFrame(tick);
-  };
-
-  switchSettleFrame = requestAnimationFrame(tick);
-}
+const popoverDragContext: PopoverDragContext = {
+  getCursorElement: () => cursorEl,
+  queueUpdate,
+};
 
 /**
  * 核心更新逻辑。
@@ -386,8 +323,8 @@ function doUpdateCursor(): void {
       lastCursorDur = dur;
     }
     if (
-      !switchHiddenActive &&
-      !switchRevealPending &&
+      !isSwitchHiddenActive() &&
+      !isSwitchRevealPending() &&
       cursorEl.style.opacity !== ""
     ) {
       cursorEl.style.opacity = "";
@@ -427,9 +364,9 @@ function doUpdateCursor(): void {
 
   // 9) round 3 P1：绑定 ResizeObserver / Popover 拖动 / 滚动容器事件
   //    这些 bind 函数内部有"已绑定"去重（lastBound / scrollEventBindings 包含检查 / popoverDragBinding）
-  bindResizeObservers(allowed.cursorElement);
-  bindPopoverDrag(allowed.cursorElement);
-  bindScrollContainerEvents(allowed.cursorElement);
+  bindResizeObservers(allowed.cursorElement, resizeBindingContext);
+  bindPopoverDrag(allowed.cursorElement, popoverDragContext);
+  bindScrollContainerEvents(allowed.cursorElement, scrollBindingContext);
 
   // round 4 fix（capture + cooldown）：键盘标志由 markKeyboardPending 启动的 150ms 倒计时负责清零，
   // 不再在 doUpdateCursor 末尾同步清掉——倒计时窗口内 SiYuan 同步触发的 scroll/ResizeObserver
@@ -454,153 +391,8 @@ function onScrollOrWheel(): void {
 }
 
 // ============== round 3 P1：ResizeObserver / Popover 拖动 / 滚动容器 ==============
-
 // P2: hasScroll / findAllScrollableAncestors 已迁移到 ../utils/scroll（统一去重）
-
-/** 绑定 ResizeObserver 到 protyle-content / protyle-wysiwyg，protyle 切换时自动重绑 */
-function bindResizeObservers(cursorElement: Element | null): void {
-  if (!cursorElement) return;
-  if (typeof ResizeObserver === "undefined") return;
-
-  const protyleContent = cursorElement.closest(
-    ".protyle:not(.fn__none) .protyle-content",
-  ) as HTMLElement | null;
-
-  if (protyleContent && protyleContent !== lastBoundProtyleContent) {
-    protyleContentObserver?.disconnect();
-    protyleContentObserver = new ResizeObserver(() => {
-      if (!cursorEl) return;
-      // round 4 fix：键盘触发的 ResizeObserver（Enter 新建段落等）不强制无过渡
-      if (!pendingKeyboardUpdate) cursorEl.classList.add("no-transition");
-      queueUpdate();
-    });
-    protyleContentObserver.observe(protyleContent);
-    lastBoundProtyleContent = protyleContent;
-  }
-
-  const protyleWysiwyg = cursorElement.closest(
-    ".protyle:not(.fn__none) .protyle-wysiwyg",
-  ) as HTMLElement | null;
-
-  if (protyleWysiwyg && protyleWysiwyg !== lastBoundProtyleWysiwyg) {
-    protyleWysiwygObserver?.disconnect();
-    protyleWysiwygObserver = new ResizeObserver(() => {
-      if (!cursorEl) return;
-      // round 4 fix：键盘触发的 ResizeObserver（Enter 新建段落等）不强制无过渡
-      if (!pendingKeyboardUpdate) cursorEl.classList.add("no-transition");
-      queueUpdate();
-    });
-    protyleWysiwygObserver.observe(protyleWysiwyg);
-    lastBoundProtyleWysiwyg = protyleWysiwyg;
-  }
-}
-
-/** 绑定 block__popover 拖动手柄（.resize__move）的 mousedown/mousemove/mouseup */
-function unbindPopoverDrag(): void {
-  if (!popoverDragBinding) return;
-  const { dragEl, onMouseDown, onMouseMove, onMouseUp } = popoverDragBinding;
-  dragEl.removeEventListener("mousedown", onMouseDown);
-  document.removeEventListener("mousemove", onMouseMove);
-  document.removeEventListener("mouseup", onMouseUp);
-  popoverDragBinding = null;
-}
-
-function bindPopoverDrag(cursorElement: Element | null): void {
-  if (!cursorElement) return;
-  // 如果已有绑定但对应的 popover 已从 DOM 中移除（弹窗关闭），先清理再重新绑定
-  if (popoverDragBinding && !popoverDragBinding.blockPopover.isConnected) {
-    unbindPopoverDrag();
-  }
-  if (popoverDragBinding) return; // 已绑定，跳过（弹窗通常单实例）
-
-  const blockPopover = cursorElement.closest(
-    ".block__popover",
-  ) as HTMLElement | null;
-  if (!blockPopover) return;
-
-  const dragEl = blockPopover.querySelector(
-    ".resize__move",
-  ) as HTMLElement | null;
-  if (!dragEl) return;
-
-  let isDragging = false;
-  const onMouseDown: EventListener = () => {
-    isDragging = true;
-  };
-  const onMouseMove: EventListener = () => {
-    if (isDragging && cursorEl) {
-      cursorEl.classList.add("no-transition");
-      queueUpdate();
-    }
-  };
-  const onMouseUp: EventListener = () => {
-    isDragging = false;
-  };
-
-  // mousedown 绑在拖动手柄上（只有点击拖手才进入拖动状态）
-  // mousemove/mouseup 绑在 document 上（保证鼠标移出手柄时仍能跟踪）
-  dragEl.addEventListener("mousedown", onMouseDown);
-  document.addEventListener("mousemove", onMouseMove, { passive: true });
-  document.addEventListener("mouseup", onMouseUp);
-
-  popoverDragBinding = {
-    blockPopover,
-    dragEl,
-    onMouseDown,
-    onMouseMove,
-    onMouseUp,
-  };
-}
-
-/** 嵌套滚动容器：给所有可滚动祖先绑 scroll/wheel 监听（passive） */
-function bindScrollContainerEvents(cursorElement: Element | null): void {
-  if (!cursorElement) return;
-  if (
-    cursorElement === lastScrollBindingCursorElement &&
-    scrollEventBindings.length > 0 &&
-    scrollEventBindings.every(({ el }) => el.isConnected)
-  ) {
-    return;
-  }
-  lastScrollBindingCursorElement = cursorElement;
-
-  const scrollEls = findAllScrollableAncestors(cursorElement);
-  const currentSet = new Set(scrollEls);
-
-  // 清理已绑定但不再属于当前祖先链的元素（Tab 切换 / DOM 重建后旧容器脱离）
-  for (let i = scrollEventBindings.length - 1; i >= 0; i--) {
-    const { el } = scrollEventBindings[i];
-    if (!currentSet.has(el)) {
-      if ((el as any).__zentypeScrollBound) {
-        delete (el as any).__zentypeScrollBound;
-      }
-      const [binding] = scrollEventBindings.splice(i, 1);
-      binding.el.removeEventListener("scroll", binding.handler);
-      binding.el.removeEventListener("wheel", binding.handler);
-    }
-  }
-
-  scrollEls.forEach((scrollEl) => {
-    if ((scrollEl as any).__zentypeScrollBound) return;
-    (scrollEl as any).__zentypeScrollBound = true;
-
-    const handler: EventListener = () => {
-      if (!cursorEl) return;
-      pauseBreathe();
-      // round 4 fix：键盘触发的嵌套滚动容器滚动（如 Enter 自动滚屏）保留过渡动画
-      if (!pendingKeyboardUpdate) {
-        cursorEl.classList.add("no-transition");
-        cursorEl.classList.add("no-animation");
-      }
-      queueUpdate();
-    };
-
-    scrollEl.addEventListener("scroll", handler, { passive: true });
-    scrollEl.addEventListener("wheel", handler, { passive: true });
-
-    scrollEventBindings.push({ el: scrollEl, handler });
-  });
-}
+// bindResizeObservers / bindPopoverDrag / unbindPopoverDrag 已迁移到 ./cursor/resizeBindings 和 ./cursor/popoverDrag
 
 export function initCursor(): void {
   if (initialized) return;
@@ -617,86 +409,7 @@ export function initCursor(): void {
     if (state.focusActive) scheduleResumeBreathe();
   });
 
-  // 聚焦/打字机模式：wheel/touchmove 退出处理（不涉及 scroll，避免程序滚动误退出）
-  const onWheelExit: EventListener = () => {
-    inputMode.setBothOff();
-    onScrollOrWheel();
-  };
-
-  // 聚焦/打字机模式：鼠标拖蓝检测（mouseup 时比对比 selection 变化）
-  const onMouseUpWithDragCheck: EventListener = () => {
-    if (mouseDownInfo) {
-      const currentSel = window.getSelection()?.toString() ?? "";
-      if (currentSel !== mouseDownInfo.selectionText && currentSel.length > 0) {
-        inputMode.setBothOff();
-      }
-      mouseDownInfo = null;
-    }
-    queueUpdate();
-  };
-
-  // DOM 事件绑定（passive 提升滚动性能）
-  // round 3：移除三阶段 throttle（200/400/600ms），改用 keydown/input 配 rAF 包裹。
-  // compositionend + input 已覆盖 IME / 自动换行延迟场景。
-  const handlers: Array<[string, EventListener, AddEventListenerOptions?]> = [
-    ["selectionchange", queueUpdate],
-    // keydown + input 用 rAF 包裹（参考版做法），替代三阶段 throttle
-    // round 4 fix：先 set flag，下一次 doUpdateCursor 末尾 reset；
-    // 让 Enter 触发的 scroll/ResizeObserver 知道本次更新是键盘驱动，不加 .no-transition
-    // 聚焦/打字机模式：↑↓/PageUp/PageDown 退出；←→/Home/End/Escape 保持
-    // round 4 fix（capture + cooldown）：capture 阶段先于 SiYuan handler 跑，
-    // markKeyboardPending 启动 150ms 倒计时，期间 scroll/ResizeObserver 不加 .no-transition
-    ["keydown", (e) => {
-      const ke = e as KeyboardEvent;
-      if (ke.key === "ArrowUp" || ke.key === "ArrowDown" ||
-          ke.key === "PageUp" || ke.key === "PageDown") {
-        inputMode.setBothOff();
-      }
-      markKeyboardPending(); requestAnimationFrame(queueUpdate);
-    }, { capture: true }],
-    // 聚焦/打字机模式：输入事件开启（粘贴时跳过）
-    ["input", () => {
-      if (!isPasting) inputMode.setBothOn();
-      isPasting = false;
-      markKeyboardPending(); requestAnimationFrame(queueUpdate);
-    }, { capture: true }],
-    // mouseup：已有 cursor 更新 + 拖蓝检测
-    ["mouseup", onMouseUpWithDragCheck],
-    // 聚焦/打字机模式：鼠标点击退出
-    ["click", () => {
-      inputMode.setBothOff();
-      queueUpdate();
-    }],
-    [
-      "scroll",
-      onScrollOrWheel as EventListener,
-      { capture: true, passive: true },
-    ],
-    // 聚焦/打字机模式：wheel/touchmove 退出（capture 阶段，与 scroll/keydown/input 一致；
-    //  避免思源 scroll 容器内部 stopPropagation 拦截 bubble 末端 handler）
-    ["wheel", onWheelExit, { capture: true, passive: true }],
-    ["touchmove", onWheelExit, { capture: true, passive: true }],
-    // 聚焦/打字机模式：IME 完成开启
-    ["compositionend", () => {
-      inputMode.setBothOn();
-      queueUpdate();
-    }],
-    // resize 时刷新（思源侧边栏拖动会触发）
-    ["resize", queueUpdate, { passive: true }],
-    // 聚焦/打字机模式：粘贴标记（跳过 input 开启）
-    ["paste", () => { isPasting = true; }],
-    // 聚焦/打字机模式：拖蓝起点记录
-    ["mousedown", () => {
-      mouseDownInfo = { selectionText: window.getSelection()?.toString() ?? "" };
-    }],
-    // 聚焦/打字机模式：失焦退出
-    ["blur", () => { inputMode.setBothOff(); }],
-  ];
-
-  handlers.forEach(([event, handler, options]) => {
-    document.addEventListener(event, handler, options);
-  });
-  eventListeners = handlers;
+  bindCursorDocumentEvents(cursorEventContext);
 
   // P2: WS 监听已迁移到 ws-main EventBus（由 index.ts 订阅，destroy 时由 eventBusOffFns 清理）
   // 不再手动 addEventListener("message", ...) + JSON.parse。
@@ -716,10 +429,7 @@ export function destroyCursor(): void {
   pendingKeyboardUpdate = false;
 
   // 清理 DOM 事件
-  eventListeners.forEach(([event, handler, options]) => {
-    document.removeEventListener(event, handler, options);
-  });
-  eventListeners = [];
+  destroyCursorDocumentEvents();
 
   // P2: 退订聚焦模式变化
   if (unsubInputMode) {
@@ -750,26 +460,11 @@ export function destroyCursor(): void {
   }
 
   // round 3 P1 清理：ResizeObserver / Popover 拖动 / 滚动容器事件
-  protyleContentObserver?.disconnect();
-  protyleContentObserver = null;
-  protyleWysiwygObserver?.disconnect();
-  protyleWysiwygObserver = null;
-  lastBoundProtyleContent = null;
-  lastBoundProtyleWysiwyg = null;
+  destroyResizeObservers();
 
   unbindPopoverDrag();
 
-  scrollEventBindings.forEach(({ el, handler }) => {
-    el.removeEventListener("scroll", handler);
-    el.removeEventListener("wheel", handler);
-    delete (el as any).__zentypeScrollBound;
-  });
-  scrollEventBindings.length = 0;
-  lastScrollBindingCursorElement = null;
-
-  // commit A fix：重置聚焦/打字机模式辅助状态
-  isPasting = false;
-  mouseDownInfo = null;
+  destroyScrollContainerEvents();
 
   // commit 1：重置边缘交互状态
   lastGoodCursorPos = null;
@@ -793,7 +488,7 @@ export function onProtyleLoaded(_protyle: IProtyle): void {
 
 /** switch-protyle 回调：切换 tab 时隐藏旧位置，稳定后在新位置淡入 */
 export function onProtyleSwitched(_protyle: IProtyle): void {
-  startAnimatedSwitchSettle();
+  startSwitchSettle(switchSettleContext);
 }
 
 /** click-editorcontent 回调：用户点击了编辑器内容 */

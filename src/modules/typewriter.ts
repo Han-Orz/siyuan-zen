@@ -3,6 +3,7 @@ import { findClosestScrollableElement } from "../utils/scroll";
 import { TYPEWRITER_CONFIG } from "../config";
 import { shouldPauseTypewriter } from "../utils/edgeCases";
 import * as inputMode from "./inputMode";
+import * as inputModeTriggers from "./inputModeTriggers";
 import { isInAllowElements } from "../utils/boundary";
 
 const { COMFORT_ZONE, SCROLL_DURATION_TIERS, SCROLL_CURVE, TYPING_GAP_MS, CLICK_CENTER_LOW, CLICK_CENTER_HIGH } = TYPEWRITER_CONFIG;
@@ -537,7 +538,7 @@ export function initTypewriter(): void {
         const shouldAnimateBlockShift = shouldAnimateBlockShiftForKey(ke.key);
         // Enter/Backspace 后 SiYuan 可能 preventDefault → 不触发 input 事件 → typewriterActive 不被重置
         // 主动激活，确保 checkAndScroll 不在 line 183 早退（修 Enter 不滚的根因）
-        inputMode.setBothOn();
+        inputModeTriggers.onEnterOrBackspaceEdit();
         // 先触发 FLIP 快照
         const sel = window.getSelection();
         if (!sel || !sel.rangeCount) return;
@@ -579,7 +580,7 @@ export function initTypewriter(): void {
 
   // 初始化时立即激活打字机模式状态
   // setBothOn 是幂等的，多次调用安全；cursor 模块也会在 input 事件中调用
-  inputMode.setBothOn();
+  inputModeTriggers.onTextInput();
 }
 
 export function destroyTypewriter(): void {

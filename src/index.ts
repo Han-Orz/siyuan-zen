@@ -15,6 +15,7 @@ import {
 import { initTypewriter, destroyTypewriter } from "./modules/typewriter";
 import { initRipple, destroyRipple } from "./modules/ripple";
 import * as inputMode from "./modules/inputMode";
+import * as inputModeTriggers from "./modules/inputModeTriggers";
 import type { ModuleEnabled, ModuleName } from "./types";
 import mainCss from "./styles/index.scss";
 
@@ -110,7 +111,7 @@ export default class ZenType extends Plugin {
     // 3) switch-protyle：切 Tab → 光标更新 + 聚焦/打字机模式退出
     const onSwitched = (e: CustomEvent<{ protyle: IProtyle }>) => {
       if (!this.enabled.cursor) return;
-      inputMode.setBothOff();
+      inputModeTriggers.onSwitchProtyle();
       onProtyleSwitched(e.detail.protyle);
     };
     eventBus.on("switch-protyle", onSwitched);
