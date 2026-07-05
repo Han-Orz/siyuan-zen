@@ -29,7 +29,7 @@ Smooth cursor + typewriter mode + ripple focus for distraction-free writing in S
 
 All three features are enabled by default. To toggle:
 
-- **Top bar icon** (pencil): Toggle all three features on/off
+- **Top bar icon** (pencil): Toggle typewriter mode + ripple focus on/off; smooth cursor stays active
 - **Command palette** (Ctrl+Shift+P): Search "zenType" to see individual toggles
 
 ## Edge Cases
@@ -57,7 +57,7 @@ Open `src/config.ts` to tweak:
 | Parameter | Default | What it does |
 |-----------|---------|--------------|
 | `CURSOR_CONFIG.HEIGHT_RATIO` | `1.05` | Cursor height = line-height × this multiplier |
-| `CURSOR_CONFIG.BLINK_DELAY_MS` | `1500` | Idle delay before blink resumes |
+| `CURSOR_CONFIG.BLINK_DELAY_MS` | `1100` | Idle delay before blink resumes |
 | `EDGE_FADE.ZONE` | `20` | Pixels from editor rect edge over which cursor fades out (top + bottom symmetric) |
 | `TRANSITION.TIERS` | `[0.07, 0.15, 0.21, 0.30]` s | Distance-proportional transition duration: short moves snappy, long moves smooth |
 

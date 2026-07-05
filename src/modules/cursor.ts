@@ -3,9 +3,9 @@
  *
  * P0 修复 4 个 BUG：
  *   1. 呼吸感 —— 反向 idle 暂停/恢复（见 ./cursor/breathing.ts）
- *   2. 光标高度 —— lineHeight × 1.1（见 ../utils/getCursorRect.ts :: getCursorRect）
+ *   2. 光标高度 —— lineHeight × CURSOR_CONFIG.HEIGHT_RATIO（见 ../utils/getCursorRect.ts :: getCursorRect）
  *   3. 移动动画 —— no-transition / no-animation 在操作时启用，下一帧恢复
- *   4. 边界检测 —— isInAllowElements() 4 重检测（见 ./cursor/boundary.ts）
+ *   4. 边界检测 —— isInAllowElements() 多重检测（见 ../utils/boundary.ts）
  *
  * P2 重构：
  *   - 8 个 EventBus 生命周期回调导出（由 index.ts 订阅）
@@ -26,19 +26,20 @@
  */
 
 import type { IProtyle, IWebSocketData } from "siyuan/types";
-import { CURSOR_CONFIG, EDGE_ARROW, EDGE_FADE, TRANSITION } from "../config";
+import { CURSOR_CONFIG, EDGE_FADE, TRANSITION } from "../config";
 import { getCursorRect } from "../utils/getCursorRect";
 import { findAllScrollableAncestors } from "../utils/scroll";
 import { isInAllowElements } from "../utils/boundary";
 import { isMobile } from "../utils/isMobile";
 import { getEffectiveZIndex } from "../utils/getEffectiveZIndex";
-import { getEdgeProximity, type EdgeProximity } from "../utils/edgeProximity";
+import { getEdgeProximity } from "../utils/edgeProximity";
 import {
   initBreathing,
   pauseBreathe,
   scheduleBreathe,
   destroyBreathing,
 } from "./cursor/breathing";
+import { destroyEdgeArrow, updateEdgeArrow } from "./cursor/edgeArrow";
 import * as inputMode from "./inputMode";
 
 const CURSOR_ID = "zentype-cursor";
@@ -56,9 +57,6 @@ let prevCursorX: number | null = null; // Q7：上一次写入 transform 时的 
 let prevCursorY: number | null = null; // Q7：上一次写入 transform 时的 y，同上
 let lastCursorDur: number | null = null;
 let wasOffScreen = false; // Q-return：上一帧是否在 case B（编辑器内离屏），用于在 case C 入口强制恢复 transition 让淡入可见
-let currentEdge: EdgeProximity | null = null; // commit 1：当前边缘距离，供 commit 3（箭头，已禁用）复用
-let arrowEl: HTMLDivElement | null = null; // commit 3：视口边缘箭头 DOM 引用
-let arrowVisible = false; // commit 3：箭头可见状态（避免重复写 class）
 let initialized = false;
 let cachedZIndexElement: Element | null = null;
 let cachedEffectiveZIndex = 0;
@@ -156,72 +154,6 @@ function applyFadeAndScale(
  * 整个边缘缩放动画路线已下线；保留 case B 的平滑 opacity 淡出。
  * 如果以后想重新启用，可以从 git 历史恢复这两个函数 + SCSS keyframes + 这里的触发块。
  */
-
-/**
- * commit 3：创建或获取 #zentype-edge-arrow DOM 元素。
- * 整个插件生命周期内只创建一次（id 选择器查重），之后复用。
- */
-function createArrowElement(): HTMLDivElement {
-  let el = document.getElementById("zentype-edge-arrow") as HTMLDivElement | null;
-  if (el) return el;
-  el = document.createElement("div");
-  el.id = "zentype-edge-arrow";
-  el.style.cssText = "position: fixed; pointer-events: none;";
-  el.setAttribute("data-direction", "none");
-  document.body.appendChild(el);
-  return el;
-}
-
-/**
- * commit 3：计算箭头在视口边缘的位置，水平方向对齐光标 x 并 clamp 到视口内。
- * y 由 CSS 的 `top`/`bottom` + OFFSET 控制，JS 仅负责 x 与 y 一致性回退。
- */
-function getOffScreenArrowPosition(
-  cursorX: number,
-  cursorY: number,
-  direction: "up" | "down",
-): { x: number; y: number } {
-  const vpW = window.innerWidth;
-  const vpH = window.innerHeight;
-  const halfSize = EDGE_ARROW.SIZE / 2;
-
-  let x: number;
-  let y: number;
-  if (direction === "up") {
-    y = EDGE_ARROW.OFFSET;
-    x = Math.max(halfSize, Math.min(vpW - halfSize, cursorX));
-  } else {
-    y = vpH - EDGE_ARROW.OFFSET;
-    x = Math.max(halfSize, Math.min(vpW - halfSize, cursorX));
-  }
-  // cursorY 在当前实现中未使用（左右方向未启用），保留形参以匹配规格签名
-  void cursorY;
-  return { x, y };
-}
-
-/**
- * commit 3：显示箭头。从 currentEdge 模块变量读取当前光标坐标定位。
- */
-function showArrow(direction: "up" | "down"): void {
-  if (!arrowEl) arrowEl = createArrowElement();
-  const cursorX = currentEdge?.cursorX ?? 0;
-  const cursorY = currentEdge?.cursorY ?? 0;
-  const { x, y } = getOffScreenArrowPosition(cursorX, cursorY, direction);
-  arrowEl.style.left = `${x}px`;
-  arrowEl.style.top = `${y}px`;
-  arrowEl.setAttribute("data-direction", direction);
-  arrowEl.classList.add("visible");
-  arrowVisible = true;
-}
-
-/**
- * commit 3：隐藏箭头。仅移除 .visible 类（data-direction 保留以便排查）。
- */
-function hideArrow(): void {
-  if (!arrowEl || !arrowVisible) return;
-  arrowEl.classList.remove("visible");
-  arrowVisible = false;
-}
 
 /** rAF 节流入口：每帧最多执行一次 doUpdateCursor() */
 function queueUpdate(): void {
@@ -338,7 +270,7 @@ function startAnimatedSwitchSettle(): void {
  * 时序：
  *   1. 暂停呼吸（操作中）
  *   2. 读取选区 → getCursorRect（lineHeight × 1.05）
- *   3. 边缘距离计算（commit 1）→ currentEdge 暴露给 commit 2/3
+ *   3. 边缘距离计算（commit 1）→ 供边缘淡出与可选箭头复用
  *   4. 边界检测 → 不通过则 pauseBreathe + return（光标保留在最后位置，停在 Phase 1）
  *   5. 计算 zIndex（基于 window.siyuan.zIndex + 1）
  *   6. 写 transform / height / zIndex（commit 1：边缘淡出态走 applyFadeAndScale）
@@ -366,7 +298,6 @@ function doUpdateCursor(): void {
   // 传 editorRect 把淡出边界对齐到"编辑器内容区"而不是"裸视口"，让顶部对称底部。
   // 注意：必须先算 allowed（拿到 editorRect）再调 getEdgeProximity。
   const edge = getEdgeProximity(rect, allowed.editorRect);
-  currentEdge = edge;
 
   if (!allowed.allowed) {
     // commit D + m0115 fix：区分两种边界失败
@@ -408,21 +339,7 @@ function doUpdateCursor(): void {
     return;
   }
 
-  // commit 3：视口边缘箭头指示器
-  //   仅在编辑器主区（allowed && !isOuterElement）生效；case A 已在前面早退
-  //   离屏时按 nearest edge 上下方向显示；其他情况（左右边缘、视口内）隐藏
-  //   TODO-2：用户测试后默认关闭，ENABLED=false 时整块跳过（hideArrow 也不调）
-  if (EDGE_ARROW.ENABLED) {
-    if (allowed.isOuterElement === true) {
-      hideArrow();
-    } else if (allowed.isOuterElement === false && edge.edge === "top" && edge.isOffScreen) {
-      showArrow("up");
-    } else if (allowed.isOuterElement === false && edge.edge === "bottom" && edge.isOffScreen) {
-      showArrow("down");
-    } else if (allowed.allowed === true) {
-      hideArrow();
-    }
-  }
+  updateEdgeArrow(edge, allowed.isOuterElement, allowed.allowed);
 
   // 4) zIndex：取编辑器祖先链上最近的层叠上下文 + 1，不强制抬高到 siyuan 全局，
   //    让悬浮窗/弹窗（通常 z-index 更高）能盖在光标上方。
@@ -769,7 +686,7 @@ export function initCursor(): void {
     // 聚焦/打字机模式：粘贴标记（跳过 input 开启）
     ["paste", () => { isPasting = true; }],
     // 聚焦/打字机模式：拖蓝起点记录
-    ["mousedown", (e) => {
+    ["mousedown", () => {
       mouseDownInfo = { selectionText: window.getSelection()?.toString() ?? "" };
     }],
     // 聚焦/打字机模式：失焦退出
@@ -856,7 +773,6 @@ export function destroyCursor(): void {
 
   // commit 1：重置边缘交互状态
   lastGoodCursorPos = null;
-  currentEdge = null;
   cachedZIndexElement = null;
   cachedFullscreenElement = null;
   cachedEffectiveZIndex = 0;
@@ -865,12 +781,7 @@ export function destroyCursor(): void {
   lastCursorDur = null;
   wasOffScreen = false; // Q-return：重置"上一帧离屏"标记
 
-  // commit 3：移除箭头 DOM 元素 + 重置可见状态
-  if (arrowEl) {
-    arrowEl.remove();
-    arrowEl = null;
-  }
-  arrowVisible = false;
+  destroyEdgeArrow();
 }
 
 // ============== P2: EventBus 回调（由 index.ts 订阅并调用） ==============

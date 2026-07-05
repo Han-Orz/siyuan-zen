@@ -1,7 +1,7 @@
 /**
  * 顺滑光标定位工具。
  *
- * getCursorRect()    — 应用 lineHeight × 1.1，返回 CursorRect { x, y, width, height }
+ * getCursorRect()    — 应用 lineHeight × CURSOR_CONFIG.HEIGHT_RATIO，返回 CursorRect { x, y, width, height }
  * getCursorElement() — 当前选区所在的 DOM 元素（见 ./getCursorElement.ts）
  *
  * 算法借鉴 Neo-Plus getselection.ts：
@@ -14,7 +14,6 @@
 
 import type { CursorRect } from "../types";
 import { CURSOR_CONFIG } from "../config";
-import { getCursorElement } from "./getCursorElement";
 import { getLineHeight } from "./getLineHeight";
 
 /** 用户可配置：见 src/config.ts :: CURSOR_CONFIG.HEIGHT_RATIO */

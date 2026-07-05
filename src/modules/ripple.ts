@@ -9,7 +9,7 @@
  * 设计要点：
  *   - 句级粒度：按 .?!。？！ 切句，用 CSS Custom Highlight API 标记（零 DOM 突变）
  *   - 块级粒度：JS 直接 style.opacity
- *   - 默认 OFF，输入后 ON（inputMode.setBothOn 触发）
+ *   - 是否显示由 inputMode.focusActive 控制；默认加载状态由插件入口决定
  *   - 暂停：选中 / 悬浮窗 -> 清除所有 opacity 覆盖 + Highlight
  *   - 事件驱动：selectionchange/input + 当前块 DOM mutation + inputMode 订阅
  *
@@ -192,10 +192,6 @@ let activeSentenceFade: {
 
 function sentenceHighlightSupported(): boolean {
   return "highlights" in CSS && typeof Highlight !== "undefined";
-}
-
-function rangesEqual(a: SentenceRange | null, b: SentenceRange | null): boolean {
-  return !!a && !!b && a.start === b.start && a.end === b.end;
 }
 
 function splitSentences(text: string): SentenceRange[] {
@@ -390,7 +386,6 @@ function startSentenceFade(
   const token = sentenceFadeToken;
   const startTime = performance.now();
   const blockId = block.dataset?.nodeId ?? null;
-  const text = block.textContent ?? "";
   const textColor = getBlockTextColor(block);
   const dimColor = getThemeDimColor();
   document.documentElement.style.setProperty("--zt-sentence-fade-out-color", colorToCss(textColor));
