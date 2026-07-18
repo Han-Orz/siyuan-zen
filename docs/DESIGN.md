@@ -17,7 +17,7 @@
 | **涟漪聚焦** (Ripple Focus) | 当前块最亮，周围块按距离渐淡 | ✅ 默认 ON（与打字机共享初始化状态） |
 
 **核心价值**：让用户进入"心流"状态 —— 不用低头找光标、不被周围段落干扰。
-**设计哲学**：聚焦是**主动行为**（用户主动输入或命令触发），不是默认状态（"禅"）。
+**设计哲学**：聚焦服务于主动写作；默认启用以减少进入心流状态的额外操作，仍可通过命令切换。
 **当前版本**：v2.6.3（`package.json` / `plugin.json`）。
 
 ---
@@ -132,7 +132,7 @@ src/
 | 长距离时长 | `TRANSITION.TIERS` 分档表 | `config.ts:89-96` | Q7：短 0.07 / 中短 0.15 / 中 0.21 / 长 0.30（用户已手动调到这套值） |
 | 呼吸动画 | `3.5s linear infinite` | `styles/index.scss:20` | linear 让关键帧间也呈正弦，避免 cubic-bezier "settle" 僵硬感 |
 | 边缘淡出区 | `EDGE_FADE.ZONE = 20` | `config.ts:68-73` | 60 太早 → 30 → 20（用户逐步收紧） |
-| 离屏缩放 | `MIN_SCALE = 0.6` | `config.ts:83` | 视觉提示但不消失 |
+| 离屏缩放 | `MIN_SCALE = 0.6` | `config.ts:72` | 视觉提示但不消失 |
 | 边缘对齐 | 用 `editorRect` 不用裸视口 | `cursor.ts` `doUpdateCursor()` `edgeProximity.ts` | 顶部 ~55px 是 toolbar/breadcrumb，用视口会"顶部永不到淡出区看着瞬切" |
 | 直角矩形 | 删 `border-radius: 2px` | v2.1.0 commit | 用户偏好 |
 
@@ -194,7 +194,7 @@ else:
 
 #### 2.3.5 边缘 arrow 指示器（默认禁用）
 
-`EDGE_ARROW.ENABLED = false`（`config.ts:112`，TODO-2）。代码保留作为 opt-in 入口。完整功能：`#zentype-edge-arrow` 三角形（CSS border-trick），光标离屏时按 nearest edge 上下方向显示在视口边缘。**风险**：用户测试后认为不需要，默认关闭。
+`EDGE_ARROW.ENABLED = false`（`config.ts:101`，TODO-2）。代码保留作为 opt-in 入口。完整功能：`#zentype-edge-arrow` 三角形（CSS border-trick），光标离屏时按 nearest edge 上下方向显示在视口边缘。**风险**：用户测试后认为不需要，默认关闭。
 
 ### 2.4 squish / bounce 动画（已下线）
 
