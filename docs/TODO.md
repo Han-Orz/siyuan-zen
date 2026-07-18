@@ -1,6 +1,6 @@
 ﻿## 当前
 
-### 🟡 等集市 PR 合并 + 发 v2.6.3 release（v2.6.2 已并入 v2.6.3）
+### 🟡 v2.6.3 已发布；仅剩集市 PR / stage 工作（v2.6.2 已并入 v2.6.3）
 - **背景**：bazaar stage/plugins.json 冻结 `siyuan-zen` 在 v1.0.6（name="ZenType"），v2.0.0 起 plugin.json name 改为 `siyuan-zen` 触发 stage 校验冲突，stage 静默保留旧数据，集市从未更新。
 - **方案**：统一改名 `zenType`（repo + plugin.json name + plugins.txt path），两步 PR 重新上架。
 - **进度**：

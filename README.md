@@ -27,7 +27,7 @@ Smooth cursor + typewriter mode + ripple focus for distraction-free writing in S
 
 ## Usage
 
-Smooth cursor is enabled by default. Typewriter mode and ripple focus start off, then turn on together after the first text input or IME completion. To toggle:
+All three modules are enabled by default. Typewriter initialization immediately enables the shared typewriter/ripple state. To toggle:
 
 - **Top bar icon** (pencil): Toggle typewriter mode + ripple focus on/off; smooth cursor stays active
 - **Command palette** (Ctrl+Shift+P): Search "zenType" to see individual toggles

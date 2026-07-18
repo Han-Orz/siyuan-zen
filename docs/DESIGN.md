@@ -13,8 +13,8 @@
 | 模式 | 一句话 | 默认 |
 |---|---|---|
 | **顺滑光标** (Smooth Cursor) | 自定义蓝色光标替换系统竖线，移动时丝滑过渡 + 边缘淡出 | ✅ ON |
-| **打字机模式** (Typewriter Mode) | 输入时光标始终停在屏幕 38% 高度（黄金分割偏上） | ⚠️ 默认 OFF（首次输入后 ON） |
-| **涟漪聚焦** (Ripple Focus) | 当前块最亮，周围块按距离渐淡 | ⚠️ 默认 OFF（首次输入后 ON） |
+| **打字机模式** (Typewriter Mode) | 输入时光标始终停在屏幕 38% 高度（黄金分割偏上） | ✅ 默认 ON（初始化时立即启用共享状态） |
+| **涟漪聚焦** (Ripple Focus) | 当前块最亮，周围块按距离渐淡 | ✅ 默认 ON（与打字机共享初始化状态） |
 
 **核心价值**：让用户进入"心流"状态 —— 不用低头找光标、不被周围段落干扰。
 **设计哲学**：聚焦是**主动行为**（用户主动输入或命令触发），不是默认状态（"禅"）。
@@ -84,7 +84,7 @@ src/
 │   ├── edgeCases.ts              # 暂停场景判定（shouldPause* / isReadMode）
 │   ├── scroll.ts                 # 滚动容器检测（hasScroll / find*）
 │   ├── isMobile.ts               # 移动端检测（getFrontend）
-│   ├── lifecycle.ts              # 延迟帧追踪 + 生命周期步骤隔离
+│   ├── lifecycle.ts              # 生命周期步骤执行 + 错误隔离
 │   └── styleManager.ts           # 共享样式注入/清理
 ├── styles/index.scss             # 全局 CSS（光标 + 箭头 + 主题变量）
 └── types/index.ts                # 共享类型（RippleMode / CursorRect / ModuleEnabled）
@@ -126,12 +126,12 @@ src/
 
 | 决策 | 值 | 文件:行 | 理由 |
 |---|---|---|---|
-| 高度 | `lineHeight × 1.05` | `config.ts:31` `CURSOR_CONFIG.HEIGHT_RATIO` | 参考版 0.88 太矮覆盖少，用户偏好 1.05 |
+| 高度 | `lineHeight × 1.05` | `config.ts:26` `CURSOR_CONFIG.HEIGHT_RATIO` | 参考版 0.88 太矮覆盖少，用户偏好 1.05 |
 | 颜色 | `#5d8cd7` / `#8ab4f8` | `styles/index.scss:10,92` | 验证过的搭配，亮/暗主题各一 |
 | 移动曲线 | `0.15s cubic-bezier(0.25, 0.1, 0.25, 1)` | `styles/index.scss:17` | 参考版同款 |
-| 长距离时长 | `TRANSITION.TIERS` 分档表 | `config.ts:100-107` | Q7：短 0.07 / 中短 0.15 / 中 0.21 / 长 0.30（用户已手动调到这套值） |
+| 长距离时长 | `TRANSITION.TIERS` 分档表 | `config.ts:89-96` | Q7：短 0.07 / 中短 0.15 / 中 0.21 / 长 0.30（用户已手动调到这套值） |
 | 呼吸动画 | `3.5s linear infinite` | `styles/index.scss:20` | linear 让关键帧间也呈正弦，避免 cubic-bezier "settle" 僵硬感 |
-| 边缘淡出区 | `EDGE_FADE.ZONE = 20` | `config.ts:81` | 60 太早 → 30 → 20（用户逐步收紧） |
+| 边缘淡出区 | `EDGE_FADE.ZONE = 20` | `config.ts:68-73` | 60 太早 → 30 → 20（用户逐步收紧） |
 | 离屏缩放 | `MIN_SCALE = 0.6` | `config.ts:83` | 视觉提示但不消失 |
 | 边缘对齐 | 用 `editorRect` 不用裸视口 | `cursor.ts` `doUpdateCursor()` `edgeProximity.ts` | 顶部 ~55px 是 toolbar/breadcrumb，用视口会"顶部永不到淡出区看着瞬切" |
 | 直角矩形 | 删 `border-radius: 2px` | v2.1.0 commit | 用户偏好 |
@@ -148,7 +148,7 @@ src/
 
 **`doUpdateCursor()` 8 步时序**：
 1. **暂停呼吸**（操作中不需要）
-2. **读取光标矩形**（`getCursorRect()` lineHeight × 1.1，垂直居中）
+2. **读取光标矩形**（`getCursorRect()` lineHeight × 1.05，垂直居中）
 3. **计算边缘距离**（`getEdgeProximity(rect, editorRect)`）
 4. **边界检测**（`isInAllowElements`）→ 不通过则按 `isOuterElement` 分支处理
 5. **计算 z-index**（沿祖先链找层叠上下文 + 1）
@@ -202,7 +202,7 @@ v2.2.x 实施过"光标跨边界时 squish/bounce 关键帧动画"（CSS Transfo
 
 ### 2.5 配置入口
 
-`config.ts:29-35` `CURSOR_CONFIG`：
+`config.ts:24-30` `CURSOR_CONFIG`：
 
 ```typescript
 HEIGHT_RATIO: 1.05      // 光标高度 = lineHeight × 此倍数
@@ -449,14 +449,14 @@ function animateBlockShift(editor: HTMLElement): void {
 - 相邻 ±2 块 opacity ≈ 0.2；更远按 `[0.15, 0.1, 0.05]` 继续衰减
 - **块级** dimming 仍用 JS `style.opacity`；**句级** dimming / fade 用 CSS Custom Highlight API（零 DOM 突变，§4.3.3）
 - **嵌套块**继承顶层块 opacity；v2.6.0 起不再按块类型递归处理，也不再使用 `EMBED_MULTIPLIER` / 深度系数
-- **默认 OFF** —— 打开文档看不到任何涟漪，必须先输入才出现（Q3 决策）
+- **默认 ON** —— 初始化时立即启用共享的打字机/涟漪状态
 - **暂停场景**：选中 / 悬浮窗 → `clearAll()` 清除所有块级 opacity 覆盖 + `CSS.highlights.delete`，恢复默认
 
 ### 4.2 关键决策
 
 | 决策 | 值 | 文件:行 | 理由 |
 |---|---|---|---|
-| **默认 OFF** | `focusActive = false` 启动 | `inputMode.ts:15` | Q3：聚焦是"主动行为"不是默认状态 |
+| **默认 ON** | 初始化时启用共享的打字机/涟漪状态 | `typewriter.ts:599-601` | 与模块默认启用状态一致 |
 | **句级粒度**（v2.5.0 改 Highlight API） | 按 `.?!。？！…` 切句，小数点保护 | `ripple.ts` `splitSentences` / `applySentenceHighlight` | 用户偏好"看清整句"，不只是块；v2.5.0 废弃 `getSentences`/span 包裹 |
 | **块级 opacity 梯度** | `[1.0, 0.4, 0.2, 0.15, 0.1, 0.05]` | `config.ts` `BLOCK_LEVELS` | v2.6.0 参考 Obsidian focus，增强聚焦对比 |
 | **句级 dim alpha** | `SENTENCE_DIM_ALPHA = 0.6` | `config.ts` `SENTENCE_DIM_ALPHA` | v2.6.1 调低非当前句亮度，当前句稳定态保持原色 |
@@ -906,7 +906,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 |---|---|
 | **Q1 高亮条永久下线** | 实施已下线 + 用户偏好"纯滚动" |
 | **Q2 focus/typewriter 绑定** | 设计文档原本说"独立"，但实施后绑定；本次决定"代码即真相"，设计跟随 |
-| **Q3 涟漪默认 OFF + mouse 模式暂停** | 与高亮条同款：用户偏好简化，入口保留 |
+| **Q3 涟漪自动启用 + mouse 模式暂停** | 与当前初始化行为一致；mouse 模式入口保留 |
 | **Q4 命令 4 个** | enable/disable × 2，Q2 绑定下 toggle 不够 |
 | **DESIGN.md 合并** | 散落文档（CONTINUATION/FOCUS_TYPEWRITER/CURSOR_ANIMATION_DECISIONS 等）已过时且重复 |
 
@@ -1015,4 +1015,4 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 
 ---
 
-**最后更新**：2026-07-05（v2.6.3 Cursor Submodule Split + Lifecycle Utility + 文档同步）
+**最后更新**：2026-07-18（v2.6.3 Cursor Submodule Split + Lifecycle Utility + 文档同步）
