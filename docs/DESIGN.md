@@ -115,7 +115,7 @@ src/
 
 - 思源默认系统竖线光标 → 自定义蓝色光标替换（亮色 `#5d8cd7` / 暗色 `#8ab4f8`）
 - 移动时 **0.15s cubic-bezier 平滑过渡**（远距离按 `TRANSITION.TIERS` 表自动加长到 0.3s）
-- 停止活动 **1.5s 后**进入呼吸闪烁（9-keyframe 正弦曲线，3.5s 一周期）
+- 停止活动 **1.1s 后**进入呼吸闪烁（9-keyframe 正弦曲线，3.5s 一周期）
 - 接近视口边缘（**顶/底对称，20px 范围内**）→ 平滑淡出 + 缩小（scale 0.6-1.0）
 - 离开视口 → 停在最后可见位置 + 完全淡出
 - 返回视口 → 平滑淡入（case C 强制 remove `.no-transition` + reflow）
@@ -154,7 +154,7 @@ src/
 5. **计算 z-index**（沿祖先链找层叠上下文 + 1）
 6. **写 transform / height / z-index**（边缘态走 `applyFadeAndScale`，正常态走原生 transform）
 7. **强制布局同步**（`void cursorEl.offsetHeight` 让 no-transition 立即生效）
-8. **下一帧 rAF 移除 `.no-transition`** + 1.5s 后恢复呼吸（边缘附近不恢复）
+8. **下一帧 rAF 移除 `.no-transition`** + 1.1s 后恢复呼吸（边缘附近不恢复）
 
 #### 2.3.3 边界检测 4 重（`utils/boundary.ts:34-153`）
 
@@ -206,7 +206,7 @@ v2.2.x 实施过"光标跨边界时 squish/bounce 关键帧动画"（CSS Transfo
 
 ```typescript
 HEIGHT_RATIO: 1.05      // 光标高度 = lineHeight × 此倍数
-BLINK_DELAY_MS: 1500     // 停止活动后多少毫秒恢复呼吸
+BLINK_DELAY_MS: 1100     // 停止活动后多少毫秒恢复呼吸
 ```
 
 **未开放的开关**（CSS 编译期锁死）：
@@ -813,7 +813,7 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 | 模块 | 配置块 | 参数 | 默认 | 说明 |
 |---|---|---|---|---|
 | 顺滑光标 | `CURSOR_CONFIG` | `HEIGHT_RATIO` | `1.05` | 光标高度 = 行高 × 此倍数 |
-| 顺滑光标 | `CURSOR_CONFIG` | `BLINK_DELAY_MS` | `1500` | 停止活动后多少毫秒恢复呼吸 |
+| 顺滑光标 | `CURSOR_CONFIG` | `BLINK_DELAY_MS` | `1100` | 停止活动后多少毫秒恢复呼吸 |
 | 顺滑光标 | `EDGE_FADE` | `ZONE` | `20` | 距编辑器顶/底多少像素内淡出 |
 | 顺滑光标 | `EDGE_FADE` | `MIN_SCALE` | `0.6` | 完全离屏时最小缩放 |
 | 顺滑光标 | `TRANSITION` | `TIERS` | `[0.07, 0.15, 0.21, 0.30]` s | 距离分档过渡时长 |
