@@ -1,4 +1,4 @@
-# zenType 设计文档（v2.6.2）
+# zenType 设计文档（v2.6.3）
 
 > **本文件合并自 `docs/FOCUS_TYPEWRITER_DESIGN.md`（已删除）+ 早期 `TODO.md`（已删除）的设计段。**
 > **代码即真相，本文档跟随代码，不是反过来。**
@@ -18,7 +18,7 @@
 
 **核心价值**：让用户进入"心流"状态 —— 不用低头找光标、不被周围段落干扰。
 **设计哲学**：聚焦是**主动行为**（用户主动输入或命令触发），不是默认状态（"禅"）。
-**当前版本**：v2.6.2（`package.json` / `plugin.json`）。
+**当前版本**：v2.6.3（`package.json` / `plugin.json`）。
 
 ---
 
@@ -63,7 +63,6 @@ src/
 ├── modules/
 │   ├── cursor.ts                 # 顺滑光标主模块（DOM 创建 + 核心循环 + EventBus 回调）
 │   ├── cursor/
-│   │   ├── boundary.ts           # 4 重边界检测（活跃编辑器 + AV 排除 + AABB）
 │   │   ├── breathing.ts          # 呼吸动画状态机
 │   │   ├── edgeArrow.ts          # 边缘箭头 DOM/定位/显隐（默认禁用）
 │   │   ├── events.ts             # document 事件注册 + 释放（13 条 handler）
@@ -76,6 +75,7 @@ src/
 │   ├── inputMode.ts              # 聚焦/打字机 ON/OFF 状态 + 订阅
 │   └── inputModeTriggers.ts      # 触发适配层（语义事件 → setBothOn/Off）
 ├── utils/
+│   ├── boundary.ts               # 4 重边界检测（活跃编辑器 + AV 排除 + AABB）
 │   ├── getCursorRect.ts          # 光标显示矩形
 │   ├── getCursorElement.ts       # 当前选区所在 DOM
 │   ├── getLineHeight.ts          # 所在行 computed lineHeight
@@ -84,6 +84,7 @@ src/
 │   ├── edgeCases.ts              # 暂停场景判定（shouldPause* / isReadMode）
 │   ├── scroll.ts                 # 滚动容器检测（hasScroll / find*）
 │   ├── isMobile.ts               # 移动端检测（getFrontend）
+│   ├── lifecycle.ts              # 延迟帧追踪 + 生命周期步骤隔离
 │   └── styleManager.ts           # 共享样式注入/清理
 ├── styles/index.scss             # 全局 CSS（光标 + 箭头 + 主题变量）
 └── types/index.ts                # 共享类型（RippleMode / CursorRect / ModuleEnabled）
@@ -155,7 +156,7 @@ src/
 7. **强制布局同步**（`void cursorEl.offsetHeight` 让 no-transition 立即生效）
 8. **下一帧 rAF 移除 `.no-transition`** + 1.5s 后恢复呼吸（边缘附近不恢复）
 
-#### 2.3.3 边界检测 4 重（`cursor/boundary.ts:34-153`）
+#### 2.3.3 边界检测 4 重（`utils/boundary.ts:34-153`）
 
 ```
 1) getActiveEditor() 校验
@@ -1006,12 +1007,12 @@ subscribe(cb) → unsubscribe  // inputMode.ts:30-34
 
 | 文件 | 当前 | 备注 |
 |---|---|---|
-| `package.json` `version` | `2.6.2` | v2.6.2 当前版本 |
-| `plugin.json` `version` | `2.6.2` | 同上 |
-| `docs/CHANGELOG.md` | ✅ 已维护 | 位于 docs/CHANGELOG.md，覆盖 v2.0~v2.6.1；v2.6.2 变更见本文件 §9.11 |
+| `package.json` `version` | `2.6.3` | v2.6.3 当前版本 |
+| `plugin.json` `version` | `2.6.3` | 同上 |
+| `docs/CHANGELOG.md` | ✅ 已维护 | 位于 docs/CHANGELOG.md，覆盖 v2.0~v2.6.3 |
 
-> v2.6.2 为保行为架构重构里程碑。`version` 字段从 v2.3.0 → v2.5.0（跳过 2.4，Highlight API 重写）→ v2.6.0 → v2.6.1 → v2.6.2。
+> 当前发布版本为 v2.6.3；v2.6.2 为保行为架构重构里程碑。`version` 字段从 v2.3.0 → v2.5.0（跳过 2.4，Highlight API 重写）→ v2.6.0 → v2.6.1 → v2.6.2 → v2.6.3。
 
 ---
 
-**最后更新**：2026-07-05（v2.6.2 保行为架构重构 Tasks 0-4 + 文档同步）
+**最后更新**：2026-07-05（v2.6.3 Cursor Submodule Split + Lifecycle Utility + 文档同步）
